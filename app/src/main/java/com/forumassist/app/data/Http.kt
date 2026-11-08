@@ -80,13 +80,23 @@ class Http(private val store: Store) {
 
     private val jar = PersistentCookieJar(store)
 
-    private val client: OkHttpClient = OkHttpClient.Builder()
+    /**
+     * 供图片加载（Coil）复用：带上 Cookie 与 Referer，
+     * 否则登录可见的附件图/防防盗链图片会 403。
+     */
+    val okHttpClient: OkHttpClient = OkHttpClient.Builder()
         .cookieJar(jar)
         .connectTimeout(12, TimeUnit.SECONDS)
         .readTimeout(18, TimeUnit.SECONDS)
         .writeTimeout(18, TimeUnit.SECONDS)
         .followRedirects(true)
         .followSslRedirects(true)
+        .addInterceptor { chain ->
+            val req = chain.request()
+            val referer = req.header("Referer")
+                ?: (req.url.scheme + "://" + req.url.host + "/")
+            chain.proceed(req.newBuilder().header("Referer", referer).build())
+        }
         .build()
 
     /**
@@ -105,7 +115,7 @@ class Http(private val store: Store) {
             .header("Accept-Language", "zh-CN,zh;q=0.9")
             .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
         referer?.let { builder.header("Referer", it) }
-        client.newCall(builder.build()).execute().use { resp ->
+        okHttpClient.newCall(builder.build()).execute().use { resp ->
             if (!resp.isSuccessful) return@use null
             resp.body?.string()
         }
@@ -118,7 +128,7 @@ class Http(private val store: Store) {
             .header("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
             .header("Accept-Language", "zh-CN,zh;q=0.9")
         referer?.let { builder.header("Referer", it) }
-        client.newCall(builder.build()).execute().use { resp ->
+        okHttpClient.newCall(builder.build()).execute().use { resp ->
             if (!resp.isSuccessful) return@use null
             resp.body?.bytes()
         }
@@ -132,7 +142,7 @@ class Http(private val store: Store) {
             .header("Accept-Language", "zh-CN,zh;q=0.9")
             .header("X-Requested-With", "XMLHttpRequest")
         referer?.let { builder.header("Referer", it) }
-        client.newCall(builder.build()).execute().use { resp ->
+        okHttpClient.newCall(builder.build()).execute().use { resp ->
             resp.body?.string()
         }
     }.getOrNull()

@@ -408,17 +408,33 @@ class ForumClient(private val http: Http) {
         val doc = Jsoup.parse(html, site.baseUrl)
         val map = LinkedHashMap<String, ThreadSummary>()
         // 跳过手机版首页的广告位/四页 tab 链接，避免把「新人必看」这类公告当成信息流
-        val links = doc.select("a[href*=viewthread], a[href*=thread-]")
+        val all = doc.select("a[href*=viewthread], a[href*=thread-]")
             .toList()
             .filter { it.closest(".ma-text-grid, .mobile-adv, .tabs, #tabs-box") == null }
+        // 电脑版列表的标题链接是 a.xst；其余（“新窗口打开”“查看”“回复”等操作入口）不参与
+        val preferred = all.filter { it.classNames().contains("xst") }
+        val links = if (preferred.isNotEmpty()) preferred else all
+        val noiseTitles = setOf("新窗口打开", "查看", "回复", "收藏", "分享", "更多", "返回", "上一页", "下一页")
+
         for (a in links) {
             val href = a.attr("href")
             val tid = tidOf(href) ?: continue
             var title = a.text().trim()
             if (title.length < 3) title = a.attr("title").trim()
             if (title.length < 3) continue
+            if (title in noiseTitles || title.contains("新窗口打开")) continue
             if (title.endsWith("...") && title.length <= 3) continue
             if (map.containsKey(tid)) continue
+
+            // 兜底：标题被 JS 渲染成空文本时，从同一行里找带文字的同帖链接
+            if (title.length < 6) {
+                val row = a.closest("tbody, tr, li") ?: a.parent()
+                val rowLinks = row?.select("a[href*=viewthread], a[href*=thread-]")?.toList().orEmpty()
+                val alt = rowLinks
+                    .firstOrNull { it.text().trim().length >= 6 && !it.text().contains("新窗口打开") }
+                    ?.text()?.trim()
+                if (!alt.isNullOrBlank()) title = alt
+            }
 
             val box: Element = a.closest("li, tr, .thread, .list, .bm_c, dl") ?: a.parent() ?: a
             val text = box.text()
@@ -536,7 +552,7 @@ class ForumClient(private val http: Http) {
         val title = doc.selectFirst("#thread_subject")?.text()?.trim()?.ifBlank { null }
             ?: doc.selectFirst(".thread-title, .threadtitle, h1.ts, h1")?.text()?.trim()?.ifBlank { null }
             ?: doc.title().substringBefore(" - ").substringBefore("_").trim()
-        val posts = parsePosts(doc)
+        val posts = parsePosts(doc, site.baseUrl)
         if (posts.isEmpty()) return null
 
         val totalPages = Regex("page=(\\d+)").findAll(html).mapNotNull { it.groupValues[1].toIntOrNull() }
@@ -557,7 +573,7 @@ class ForumClient(private val http: Http) {
         return ThreadDetail(summary = summary, posts = posts, page = page, totalPages = totalPages)
     }
 
-    private fun parsePosts(doc: Document): List<Post> {
+    private fun parsePosts(doc: Document, baseUrl: String): List<Post> {
         // 方案 A：标准/桌面模板 div[id=post_xxx]（含内嵌正文节点）
         val nodes = doc.select("div[id^=post_]").toList().filter {
             it.selectFirst(BODY_SELECTOR) != null
@@ -565,7 +581,7 @@ class ForumClient(private val http: Http) {
         if (nodes.isNotEmpty()) {
             return nodes.mapIndexed { index, el ->
                 val body = el.selectFirst(BODY_SELECTOR) ?: el
-                buildPost(el, body, index, extracted = true)
+                buildPost(el, body, index, extracted = true, baseUrl = baseUrl)
             }
         }
 
@@ -581,7 +597,7 @@ class ForumClient(private val http: Http) {
                 ?: continue
             val key = holder.text().take(40)
             if (key.isBlank() || !seen.add(key)) continue
-            out.add(buildPost(holder, body, out.size, extracted = false))
+            out.add(buildPost(holder, body, out.size, extracted = false, baseUrl = baseUrl))
         }
         return out
     }
@@ -593,7 +609,7 @@ class ForumClient(private val http: Http) {
                 ".article-content, .post-content, .thread-content, .post_message"
     }
 
-    private fun buildPost(holder: Element, body: Element, index: Int, extracted: Boolean): Post {
+    private fun buildPost(holder: Element, body: Element, index: Int, extracted: Boolean, baseUrl: String): Post {
         val pid = holder.id().removePrefix("post_")
         val author = holder.selectFirst("a.xw1, .authi .z a, .mtit a, .authi a, .favatar a, .pi a, .username, .author a, .postinfo a")
             ?.text()?.trim().orEmpty()
@@ -622,13 +638,34 @@ class ForumClient(private val http: Http) {
         var isOp = floor == 1
         if (!isOp && index == 0) isOp = true
 
-        val blocks = HtmlBlocks.parse(html).toMutableList()
+        val blocks = HtmlBlocks.parse(html, baseUrl).toMutableList()
         // 附件不在正文节点里，而在同楼层的 .pattl > dl.tattl 中（付费附件链接是 attachpay）
         val attScope = if (holder.selectFirst("div.pattl, dl.tattl") != null) holder
         else holder.parents().take(5).firstOrNull { it.selectFirst("div.pattl, dl.tattl") != null } ?: holder
         val seenAtt = HashSet<String>()
         for (dl in attScope.select("div.pattl dl.tattl, dl.tattl")) {
-            val link = dl.selectFirst("p.attnm a[href], .attnm a[href]") ?: continue
+            val link = dl.selectFirst("p.attnm a[href], .attnm a[href]")
+            if (link == null) {
+                // 图片型附件没有文件名链接，直接取图片地址
+                val img = dl.selectFirst("img")
+                if (img != null) {
+                    var rawImg = ""
+                    for (key in listOf("zoomfile", "file", "data-src", "src")) {
+                        val v = img.attr(key).trim()
+                        if (v.isNotBlank() && !v.contains("none.gif")) { rawImg = v; break }
+                    }
+                    val url = when {
+                        rawImg.startsWith("http") -> rawImg
+                        rawImg.startsWith("//") -> "https:$rawImg"
+                        rawImg.isBlank() -> ""
+                        else -> runCatching {
+                            java.net.URL(java.net.URL(baseUrl), rawImg).toString()
+                        }.getOrDefault("")
+                    }
+                    if (url.startsWith("http") && seenAtt.add(url)) blocks.add(Block.Image(url))
+                }
+                continue
+            }
             val name = link.text().trim()
             if (name.isBlank()) continue
             val href = link.absUrl("href").ifBlank { link.attr("href") }

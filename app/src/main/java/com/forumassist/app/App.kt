@@ -1,6 +1,8 @@
 package com.forumassist.app
 
 import android.content.Context
+import coil.ImageLoader
+import coil.SingletonImageLoader
 import com.forumassist.app.data.Store
 
 /**
@@ -13,6 +15,16 @@ object App {
     fun init(context: Context) {
         if (!::state.isInitialized) {
             state = AppState(context.applicationContext)
+
+            // 图片加载复用 App 的 OkHttp（带登录 Cookie + Referer），
+            // 否则登录可见的附件图、开启防盗链的站点会 403 显示空白。
+            runCatching {
+                SingletonImageLoader.setSafe { ctx ->
+                    ImageLoader.Builder(ctx)
+                        .okHttpClient(state.http.okHttpClient)
+                        .build()
+                }
+            }
         }
     }
 

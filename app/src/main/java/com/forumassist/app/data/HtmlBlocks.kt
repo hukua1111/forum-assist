@@ -14,7 +14,7 @@ object HtmlBlocks {
         "p", "div", "br", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "table"
     )
 
-    fun parse(html: String): List<Block> {
+    fun parse(html: String, baseUrl: String = ""): List<Block> {
         if (html.isBlank()) return emptyList()
         val doc = runCatching { Jsoup.parseBodyFragment(html) }.getOrNull() ?: return emptyList()
         val out = mutableListOf<Block>()
@@ -30,6 +30,16 @@ object HtmlBlocks {
             buffer.setLength(0)
         }
 
+        // 把相对地址补成绝对地址（Discuz 图片多为 data/attachment/... 相对路径）
+        fun absolute(raw: String): String {
+            val v = raw.trim()
+            if (v.isBlank()) return ""
+            if (v.startsWith("http://") || v.startsWith("https://")) return v
+            if (v.startsWith("//")) return "https:$v"
+            if (baseUrl.isBlank()) return ""
+            return runCatching { java.net.URL(java.net.URL(baseUrl), v).toString() }.getOrDefault("")
+        }
+
         fun walk(node: Node) {
             when (node) {
                 is TextNode -> buffer.append(node.text())
@@ -37,8 +47,20 @@ object HtmlBlocks {
                     val tag = node.tagName().lowercase()
                     when {
                         tag == "img" -> {
-                            val src = node.absUrl("src").ifBlank { node.attr("src") }
-                            if (src.startsWith("http")) {
+                            // Discuz 的懒加载图：src 是占位/缩略，真实地址在 zoomfile / file
+                            var raw = ""
+                            for (key in listOf("zoomfile", "file", "data-src", "data-original", "src")) {
+                                val v = node.attr(key).trim()
+                                if (v.isNotBlank() && !v.contains("none.gif")) { raw = v; break }
+                            }
+                            val src = absolute(raw)
+                            val w = node.attr("width").toIntOrNull() ?: 0
+                            val skip = src.isEmpty() ||
+                                src.contains("none.gif") ||
+                                src.contains("/smiley/") ||
+                                src.contains("static/image/") ||
+                                (w in 1..60)
+                            if (!skip) {
                                 flush()
                                 out.add(Block.Image(src))
                             }
