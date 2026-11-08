@@ -1,7 +1,13 @@
 package com.forumassist.app.data
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -501,6 +507,11 @@ class ForumClient(private val http: Http) {
             }.distinct()
 
             val diag = StringBuilder()
+            // 尚香书苑：各入口互相独立，串行请求最坏要等 4×18 秒。
+            // 并发探测，谁先拿到正文用谁，整体给 12 秒上限。
+            if (site.profile.parallelDetail) {
+                return@withContext detailRacing(site, tid, page, candidates, diag)
+            }
             for (url in candidates) {
                 // 带 Referer，某些站点的防采集插件会校验来源
                 val html = http.get(url, referer = site.baseUrl.trimEnd('/') + "/forum.php")
@@ -532,6 +543,54 @@ class ForumClient(private val http: Http) {
         runCatching { parseDetail(html, site, tid, page) }.getOrNull()
 
     /**
+     * 详情入口探测（尚香书苑）。
+     *
+     * 先给「列表里的原始链接」2.5 秒——正常登录状态下它直接就能拿到正文，不会多打请求；
+     * 超时了再把其余入口并发出去，谁先解析成功用谁。整体上限 12 秒，
+     * 相比串行（最坏 4×18 秒）能明显缩短「点进正文」的等待。
+     */
+    private suspend fun detailRacing(
+        site: Site,
+        tid: String,
+        page: Int,
+        candidates: List<String>,
+        diag: StringBuilder
+    ): ThreadDetail? {
+        // 用独立 scope 发请求：OkHttp 的阻塞式调用无法被协程中断，
+        // 若挂在调用方的结构化作用域里，最先返回后还要等其余请求跑完，等于白并发。
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val first = CompletableDeferred<ThreadDetail>()
+
+        fun fire(url: String) {
+            scope.launch {
+                val parsed = runCatching { fetchDetail(url, site, tid, page) }.getOrNull()
+                if (parsed != null) first.complete(parsed)
+            }
+        }
+
+        try {
+            fire(candidates.first())
+            var hit: ThreadDetail? = withTimeoutOrNull(2_500L) { first.await() }
+            if (hit == null) {
+                candidates.drop(1).forEach { fire(it) }
+                hit = withTimeoutOrNull(9_500L) { first.await() }
+            }
+            lastDetailDebug = hit?.let { "成功：${it.posts.size} 楼（并发探测）" }
+                ?: diag.toString().ifBlank { "并发探测 ${candidates.size} 个入口均未拿到正文" }
+            return hit
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    private fun fetchDetail(url: String, site: Site, tid: String, page: Int): ThreadDetail? {
+        val html = http.get(url, referer = site.baseUrl.trimEnd('/') + "/forum.php") ?: return null
+        if (isLoginWall(html)) return null
+        val parsed = parseDetail(html, site, tid, page) ?: return null
+        return if (parsed.posts.isNotEmpty()) parsed else null
+    }
+
+    /**
      * 是否是「请先登录」页。
      * 基准：页面里有没有可解析的正文节点；只有完全没有正文、且明显是登录页时才判定为登录墙。
      * （早期版本用 post_/t_f 特征判断，误把使用 div.message 模板的站点当成登录页）
@@ -552,7 +611,7 @@ class ForumClient(private val http: Http) {
         val title = doc.selectFirst("#thread_subject")?.text()?.trim()?.ifBlank { null }
             ?: doc.selectFirst(".thread-title, .threadtitle, h1.ts, h1")?.text()?.trim()?.ifBlank { null }
             ?: doc.title().substringBefore(" - ").substringBefore("_").trim()
-        val posts = parsePosts(doc, site.baseUrl)
+        val posts = parsePosts(doc, site)
         if (posts.isEmpty()) return null
 
         val totalPages = Regex("page=(\\d+)").findAll(html).mapNotNull { it.groupValues[1].toIntOrNull() }
@@ -573,7 +632,7 @@ class ForumClient(private val http: Http) {
         return ThreadDetail(summary = summary, posts = posts, page = page, totalPages = totalPages)
     }
 
-    private fun parsePosts(doc: Document, baseUrl: String): List<Post> {
+    private fun parsePosts(doc: Document, site: Site): List<Post> {
         // 方案 A：标准/桌面模板 div[id=post_xxx]（含内嵌正文节点）
         val nodes = doc.select("div[id^=post_]").toList().filter {
             it.selectFirst(BODY_SELECTOR) != null
@@ -581,7 +640,7 @@ class ForumClient(private val http: Http) {
         if (nodes.isNotEmpty()) {
             return nodes.mapIndexed { index, el ->
                 val body = el.selectFirst(BODY_SELECTOR) ?: el
-                buildPost(el, body, index, extracted = true, baseUrl = baseUrl)
+                buildPost(el, body, index, extracted = true, site = site)
             }
         }
 
@@ -597,7 +656,7 @@ class ForumClient(private val http: Http) {
                 ?: continue
             val key = holder.text().take(40)
             if (key.isBlank() || !seen.add(key)) continue
-            out.add(buildPost(holder, body, out.size, extracted = false, baseUrl = baseUrl))
+            out.add(buildPost(holder, body, out.size, extracted = false, site = site))
         }
         return out
     }
@@ -609,7 +668,8 @@ class ForumClient(private val http: Http) {
                 ".article-content, .post-content, .thread-content, .post_message"
     }
 
-    private fun buildPost(holder: Element, body: Element, index: Int, extracted: Boolean, baseUrl: String): Post {
+    private fun buildPost(holder: Element, body: Element, index: Int, extracted: Boolean, site: Site): Post {
+        val baseUrl = site.baseUrl
         val pid = holder.id().removePrefix("post_")
         val author = holder.selectFirst("a.xw1, .authi .z a, .mtit a, .authi a, .favatar a, .pi a, .username, .author a, .postinfo a")
             ?.text()?.trim().orEmpty()
@@ -639,49 +699,23 @@ class ForumClient(private val http: Http) {
         if (!isOp && index == 0) isOp = true
 
         val blocks = HtmlBlocks.parse(html, baseUrl).toMutableList()
-        // 附件不在正文节点里，而在同楼层的 .pattl > dl.tattl 中（付费附件链接是 attachpay）
-        val attScope = if (holder.selectFirst("div.pattl, dl.tattl") != null) holder
-        else holder.parents().take(5).firstOrNull { it.selectFirst("div.pattl, dl.tattl") != null } ?: holder
-        val seenAtt = HashSet<String>()
-        for (dl in attScope.select("div.pattl dl.tattl, dl.tattl")) {
-            val link = dl.selectFirst("p.attnm a[href], .attnm a[href]")
-            if (link == null) {
-                // 图片型附件没有文件名链接，直接取图片地址
-                val img = dl.selectFirst("img")
-                if (img != null) {
-                    var rawImg = ""
-                    for (key in listOf("zoomfile", "file", "data-src", "src")) {
-                        val v = img.attr(key).trim()
-                        if (v.isNotBlank() && !v.contains("none.gif")) { rawImg = v; break }
-                    }
-                    val url = when {
-                        rawImg.startsWith("http") -> rawImg
-                        rawImg.startsWith("//") -> "https:$rawImg"
-                        rawImg.isBlank() -> ""
-                        else -> runCatching {
-                            java.net.URL(java.net.URL(baseUrl), rawImg).toString()
-                        }.getOrDefault("")
-                    }
-                    if (url.startsWith("http") && seenAtt.add(url)) blocks.add(Block.Image(url))
-                }
-                continue
-            }
-            val name = link.text().trim()
-            if (name.isBlank()) continue
-            val href = link.absUrl("href").ifBlank { link.attr("href") }
-            if (href.isBlank() || !href.startsWith("http")) continue
-            if (!seenAtt.add(name + "|" + href)) continue
+        // 附件不在正文节点里，而在同楼层的 .pattl 里（付费附件链接是 attachpay）。
+        // 尚香书苑的模板把附件放在 t_fsz 里、可能包一层 ignore_js_op，用增强解析；
+        // 其他站点继续走原来的 dl.tattl 逻辑，行为完全不变。
+        val profile = site.profile
+        val attSelector = if (profile.richAttachment) "div.pattl, dl.tattl, ignore_js_op"
+        else "div.pattl, dl.tattl"
+        val attScope = if (holder.selectFirst(attSelector) != null) holder
+        else holder.parents().take(5).firstOrNull { it.selectFirst(attSelector) != null } ?: holder
 
-            val meta = dl.select("p").map { it.text().trim() }
-                .filter {
-                    it.isNotBlank() && (
-                        it.contains("MB") || it.contains("KB") || it.contains("GB") ||
-                            it.contains("下载") || it.contains("售价") || it.contains("金币") || it.contains("金钱")
-                        )
-                }
-                .joinToString(" · ")
-            blocks.add(Block.File(name = name, url = href, meta = meta))
+        val attachments = if (profile.richAttachment) {
+            Attachments.rich(attScope, baseUrl)
+        } else {
+            Attachments.legacy(attScope, baseUrl)
         }
+        // 附件统一排在正文之后，避免插进段落中间；正文里已经出现过的图片不重复添加
+        val inlineImages = blocks.filterIsInstance<Block.Image>().map { it.url }.toSet()
+        blocks.addAll(attachments.filter { b -> b !is Block.Image || b.url !in inlineImages })
 
         return Post(
             pid = pid,

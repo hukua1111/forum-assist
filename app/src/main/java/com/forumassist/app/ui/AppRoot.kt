@@ -274,7 +274,12 @@ fun AppRoot() {
                                     )
                                 )
                             },
-                            onLogin = { nav.navigate("login/${site.id}") }
+                            onLogin = { nav.navigate("login/${site.id}") },
+                            onOpenUrl = { target ->
+                                // 附件/付费页要在站内打开：先把原生登录态补给 WebView
+                                runCatching { state.http.ensureWebSession(target) }
+                                nav.navigate(webRoute(site, target))
+                            }
                         )
                     }
 

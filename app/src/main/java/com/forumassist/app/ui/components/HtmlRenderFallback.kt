@@ -9,25 +9,33 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.forumassist.app.data.AdBlock
 import org.json.JSONTokener
 import java.io.ByteArrayInputStream
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * 隐藏的 WebView 渲染器：加载页面 → 等 JS 执行完 → 取回渲染后的 DOM。
  * 用于绕过 WAF / JS 渲染 / 动态签名等「直接 HTTP 抓不到内容」的站点。
+ *
+ * [fastExtract] = true 时不再死等 onPageFinished（它会等到所有图片/统计脚本结束），
+ * 而是在首屏可见后就开始尝试取 DOM，通常能提前 1~3 秒拿到正文。
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun HtmlRenderFallback(
     url: String,
     adBlock: Boolean,
+    fastExtract: Boolean = false,
     onHtml: (String) -> Unit,
     onFailed: () -> Unit
 ) {
+    val done = remember { AtomicBoolean(false) }
+
     AndroidView(
         modifier = Modifier.size(1.dp),
         factory = { ctx ->
@@ -36,6 +44,7 @@ fun HtmlRenderFallback(
                 settings.domStorageEnabled = true
                 settings.loadsImagesAutomatically = false // 只要 DOM，不需要图片
                 settings.blockNetworkImage = true
+                settings.javaScriptCanOpenWindowsAutomatically = false
                 CookieManager.getInstance().setAcceptCookie(true)
                 CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
 
@@ -53,12 +62,40 @@ fun HtmlRenderFallback(
                         return super.shouldInterceptRequest(view, request)
                     }
 
+                    /** 首屏可见即尝试取 DOM（仅 fastExtract 模式），拿不到就退避重试几次 */
+                    override fun onPageCommitVisible(view: WebView?, u: String?) {
+                        super.onPageCommitVisible(view, u)
+                        if (!fastExtract) return
+                        val wv = view ?: return
+                        var tries = 0
+                        fun attempt(): Unit {
+                            if (done.get() || tries >= 4) return
+                            tries++
+                            wv.evaluateJavascript(DOM_IF_READY_JS) { raw ->
+                                val html = decodeJsString(raw)
+                                if (!done.get() && html != null && html.length > 800) {
+                                    done.set(true)
+                                    onHtml(html)
+                                } else if (!done.get()) {
+                                    wv.postDelayed({ attempt() }, 500)
+                                }
+                            }
+                        }
+                        wv.postDelayed({ attempt() }, 300)
+                    }
+
                     override fun onPageFinished(view: WebView?, u: String?) {
-                        view?.evaluateJavascript(
-                            "(function(){try{return document.documentElement.outerHTML||''}catch(e){return ''}})()"
-                        ) { raw ->
+                        if (done.get()) return
+                        view?.evaluateJavascript(DOM_JS) { raw ->
+                            if (done.get()) return@evaluateJavascript
                             val html = decodeJsString(raw)
-                            if (html != null && html.length > 800) onHtml(html) else onFailed()
+                            if (html != null && html.length > 800) {
+                                done.set(true)
+                                onHtml(html)
+                            } else {
+                                done.set(true)
+                                onFailed()
+                            }
                         }
                     }
 
@@ -67,7 +104,9 @@ fun HtmlRenderFallback(
                         request: WebResourceRequest?,
                         error: WebResourceError?
                     ) {
-                        if (request?.isForMainFrame == true) onFailed()
+                        if (request?.isForMainFrame == true && done.compareAndSet(false, true)) {
+                            onFailed()
+                        }
                     }
                 }
                 runCatching { com.forumassist.app.App.state.http.ensureWebSession(url) }
@@ -76,6 +115,13 @@ fun HtmlRenderFallback(
         }
     )
 }
+
+private const val DOM_JS =
+    "(function(){try{return document.documentElement.outerHTML||''}catch(e){return ''}})()"
+
+/** 只在 readyState=complete 时才返回 DOM，避免拿到半成品页面 */
+private const val DOM_IF_READY_JS =
+    "(function(){try{return document.readyState==='complete'?(document.documentElement.outerHTML||''):''}catch(e){return ''}})()"
 
 /** evaluateJavascript 返回的是 JSON 字符串字面量，需要反转义 */
 private fun decodeJsString(raw: String?): String? {

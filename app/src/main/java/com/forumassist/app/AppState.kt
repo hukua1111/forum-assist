@@ -18,6 +18,7 @@ import com.forumassist.app.data.SiteKind
 import com.forumassist.app.data.Store
 import com.forumassist.app.data.ThreadDetail
 import com.forumassist.app.data.ThreadSummary
+import com.forumassist.app.data.profile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -377,14 +378,41 @@ class AppState(context: Context) {
     var lastDetailError: String? = null
         private set
 
+    /**
+     * 正文短时内存缓存：只有开启 profile.cacheDetail 的站点（目前是尚香书苑）使用。
+     * 从列表返回再进同一帖可直接命中，省掉整轮「网络 + Jsoup 解析」。
+     */
+    private val detailCache = object : LinkedHashMap<String, Pair<Long, ThreadDetail>>(8, 0.75f, true) {
+        override fun removeEldestEntry(
+            eldest: MutableMap.MutableEntry<String, Pair<Long, ThreadDetail>>
+        ): Boolean = size > 12
+    }
+
+    private fun cacheGet(key: String): ThreadDetail? {
+        val e = synchronized(detailCache) { detailCache[key] } ?: return null
+        if (System.currentTimeMillis() - e.first > 10 * 60_000L) return null
+        return e.second
+    }
+
+    private fun cachePut(key: String, detail: ThreadDetail) {
+        synchronized(detailCache) { detailCache[key] = System.currentTimeMillis() to detail }
+    }
+
     suspend fun detail(site: Site, tid: String, page: Int = 1, rawUrl: String? = null): ThreadDetail? =
         withContext(Dispatchers.IO) {
             if (site.isDemo) return@withContext Demo.detail(tid)
+            val useCache = site.profile.cacheDetail
+            val key = "${site.id}/$tid/$page"
+            if (useCache) cacheGet(key)?.let { return@withContext it }
+
             val online = client.detail(site, tid, page, rawUrl)
             if (online == null) {
                 lastDetailError = client.lastDetailDebug
                 store.loadOffline(site.id, tid)
-            } else online
+            } else {
+                if (useCache) cachePut(key, online)
+                online
+            }
         }
 
     /** WebView 渲染兜底：用取回的 DOM 解析详情 */
