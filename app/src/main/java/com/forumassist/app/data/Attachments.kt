@@ -122,9 +122,12 @@ object Attachments {
             } ?: anchors.firstOrNull { !it.attr("href").contains("attachpay") }
             val name = direct?.text()?.let { cleanName(it) }
                 ?.takeIf { it.isNotBlank() && !isActionText(it) }
-                ?: cleanName(
-                    unit.selectFirst("p.attnm, .attnm, dt, .attname, .filename")?.text().orEmpty()
-                ).ifBlank { null }
+                // 文件名节点优先于 dt：dt 里通常只有一张类型图标，按文档顺序取会拿到空串
+                ?: listOf("p.attnm a", "p.attnm", ".attnm", "dt", ".attname", ".filename")
+                    .firstNotNullOfOrNull { sel ->
+                        unit.selectFirst(sel)?.text()?.trim()?.takeIf { it.isNotBlank() }
+                    }
+                    ?.let { cleanName(it).ifBlank { null } }
                 ?: direct?.attr("title")?.trim()?.ifBlank { null }
                 ?: pay?.attr("title")?.trim()?.ifBlank { null }
                 ?: cleanName(anchors.firstOrNull()?.text().orEmpty()).ifBlank { null }
@@ -189,7 +192,11 @@ object Attachments {
     }
 
     private fun metaOf(dl: Element, clean: Boolean = false): String {
-        var list = dl.select("p").map { it.text().trim() }.filter { it.isNotBlank() }
+        var list = dl.select("p").map {
+            // 「售价: 1 金钱 [ 记录 ] [ 购买 ]」里的方括号是操作链接，展示时去掉
+            it.text().replace(Regex("\\[[^\\]]*\\]"), " ")
+                .replace(Regex("\\s+"), " ").trim()
+        }.filter { it.isNotBlank() }
         if (clean) {
             // 富解析模式下把「点击文件名下载附件」「1 小时前 上传」这类提示去掉，只留体积/售价/下载次数
             list = list.filterNot { it.contains("点击文件名") || it.endsWith("上传") }

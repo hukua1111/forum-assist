@@ -857,18 +857,20 @@ class ForumClient(private val http: Http) {
         }
 
         val hit = try {
-            // 先发两个主入口（列表原链 + 手机版），1.2 秒没命中再补发备用入口。
-            // 四个入口同时下载整页（每页几百 KB）会互相抢带宽，正常情况反而更慢。
-            val primary = candidates.take(2)
-            val backup = candidates.drop(2)
-            primary.forEach { fire(it) }
-            if (backup.isNotEmpty()) {
-                scope.launch {
-                    delay(1_200L)
-                    if (!first.isCompleted) backup.forEach { fire(it) }
+            // 错峰发请求：日志里多次出现「3 个入口同时打，全部回 2~3KB 提示页」，
+            // 而隔几秒单发一次的 page=2 却拿到整页——站点对并发很敏感。
+            // 现在先打最可能命中的列表原链，之后每 900ms 补一个入口，命中即停。
+            candidates.forEachIndexed { index, url ->
+                if (index == 0) {
+                    fire(url)
+                } else {
+                    scope.launch {
+                        delay(900L * index)
+                        if (!first.isCompleted) fire(url)
+                    }
                 }
             }
-            withTimeoutOrNull(6_500L) { first.await() }
+            withTimeoutOrNull(7_500L) { first.await() }
         } finally {
             scope.cancel()
         }
@@ -1041,8 +1043,12 @@ class ForumClient(private val http: Http) {
             holder.selectFirst("a[href*=space-uid]")?.attr("href") ?: ""
         )?.groupValues?.get(1).orEmpty()
 
-        val infoText = holder.selectFirst(".mtime, .pi, .authi, .favatar, .postinfo, .post-date, .time")
-            ?.text().orEmpty()
+        // 发帖时间优先取「发表于 …」（#authorposton），侧栏 .pi 里全是积分/勋章，容易抓错
+        val infoText = holder.selectFirst("#authorposton$pid")?.text()?.trim().orEmpty()
+            .ifBlank {
+                holder.selectFirst(".mtime, .pi, .authi, .favatar, .postinfo, .post-date, .time")
+                    ?.text().orEmpty()
+            }
         val timeRaw = Regex(
             "\\d{4}-\\d{1,2}-\\d{1,2}([\\s\\u00A0]+\\d{1,2}:\\d{1,2})?|\\d{1,2}-\\d{1,2}[\\s\\u00A0]+\\d{1,2}:\\d{1,2}|\\d+[\\s\\u00A0]*(?:秒|分钟|小时|天)前|昨天"
         ).find(infoText)?.value.orEmpty()
