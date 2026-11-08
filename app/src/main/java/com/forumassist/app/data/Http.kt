@@ -32,6 +32,29 @@ class PersistentCookieJar(private val store: Store) : CookieJar {
         }
     }
 
+    /**
+     * 导入浏览器导出的原始 Cookie 头（"k=v; k2=v2"），用于 WebView 登录态回灌。
+     * WebView Cookie 通常不带过期时间，这里默认保留 180 天。
+     */
+    fun importRaw(url: HttpUrl, header: String) {
+        synchronized(lock) {
+            val now = System.currentTimeMillis()
+            val defaultExpire = now + 180L * 24 * 3600 * 1000
+            val current = store.cookies().filter { it.host == url.host }.toMutableList()
+            for (part in header.split(";")) {
+                val idx = part.indexOf('=')
+                if (idx <= 0) continue
+                val name = part.substring(0, idx).trim()
+                val value = part.substring(idx + 1).trim()
+                if (name.isBlank()) continue
+                current.removeAll { it.name == name }
+                current.add(CookieRec(url.host, name, value, defaultExpire, url.isHttps))
+            }
+            val others = store.cookies().filterNot { it.host == url.host }
+            store.saveCookies(others + current)
+        }
+    }
+
     override fun loadForRequest(url: HttpUrl): List<Cookie> {
         synchronized(lock) {
             val now = System.currentTimeMillis()
@@ -109,7 +132,46 @@ class Http(store: Store) {
 
     fun hasLoginCookie(site: Site): Boolean {
         val url = runCatching { site.baseUrl.toHttpUrlOrNull() }.getOrNull() ?: return false
-        val cookies = jar.loadForRequest(url)
-        return cookies.any { it.name.endsWith("_auth") || it.name.endsWith("_saltkey") }
+        return hasLoginCookieFor(url)
     }
+
+    fun hasLoginCookieForUrl(url: String): Boolean {
+        val httpUrl = url.toHttpUrlOrNull() ?: return false
+        return hasLoginCookieFor(httpUrl)
+    }
+
+    // ------------------------------------------------ Cookie 双向同步（WebView ↔ 原生）
+
+    /**
+     * 把系统 WebView CookieManager 里的登录 Cookie 导入到 OkHttp 持久化存储。
+     * 用户在「网页模式」里登录后调用，原生抓取即可复用登录态。
+     */
+    fun importWebCookies(pageUrl: String): Boolean {
+        val httpUrl = pageUrl.toHttpUrlOrNull() ?: return false
+        val cm = android.webkit.CookieManager.getInstance()
+        val raw = runCatching { cm.getCookie(pageUrl) }.getOrNull() ?: return false
+        if (raw.isBlank()) return false
+        jar.importRaw(httpUrl, raw)
+        return hasLoginCookieFor(httpUrl)
+    }
+
+    /**
+     * 把原生存储的登录 Cookie 写入系统 WebView，让网页模式也能复用原生登录态。
+     */
+    fun exportCookiesToWebView(pageUrl: String) {
+        val httpUrl = pageUrl.toHttpUrlOrNull() ?: return
+        val cm = android.webkit.CookieManager.getInstance()
+        jar.loadForRequest(httpUrl).forEach { c ->
+            runCatching {
+                val attrs = StringBuilder()
+                attrs.append("Path=/; Domain=").append(httpUrl.host)
+                if (c.secure) attrs.append("; Secure")
+                cm.setCookie(pageUrl, "${c.name}=${c.value}; $attrs")
+            }
+        }
+        cm.flush()
+    }
+
+    private fun hasLoginCookieFor(url: HttpUrl): Boolean =
+        jar.loadForRequest(url).any { it.name.endsWith("_auth") || it.name.endsWith("_saltkey") }
 }

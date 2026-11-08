@@ -148,6 +148,8 @@ fun WebScreen(
                             " ForumAssist/1.0"
                         CookieManager.getInstance().setAcceptCookie(true)
                         CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                        // 原生登录态 → WebView：打开网页模式前先带上已有 Cookie
+                        runCatching { com.forumassist.app.App.state.http.exportCookiesToWebView(url) }
                         webChromeClient = object : WebChromeClient() {
                             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                                 progress = newProgress
@@ -163,8 +165,19 @@ fun WebScreen(
                                 loading = true
                             }
 
-                            override fun onPageFinished(view: WebView?, url: String?) {
+                            override fun onPageFinished(view: WebView?, vUrl: String?) {
                                 loading = false
+                                // WebView 登录态 → 原生：页面加载完成后把 Cookie 回灌给 OkHttp。
+                                // 若检测到新出现的登录 Cookie（*_auth / *_saltkey），刷新原生数据。
+                                val target = vUrl ?: url
+                                runCatching {
+                                    val http = com.forumassist.app.App.state.http
+                                    val hadLogin = http.hasLoginCookieForUrl(target)
+                                    val ok = http.importWebCookies(target)
+                                    if (ok && !hadLogin) {
+                                        com.forumassist.app.App.state.loadFeed(reset = true)
+                                    }
+                                }
                             }
                         }
                         loadUrl(url)

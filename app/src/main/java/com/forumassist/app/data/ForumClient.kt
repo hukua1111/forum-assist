@@ -247,6 +247,7 @@ class ForumClient(private val http: Http) {
                     "formhash" to formhash,
                     "referer" to u(site, "forum.php"),
                     "loginfield" to "username",
+                    "fastloginfield" to "username",
                     "username" to username,
                     "password" to password,
                     "questionid" to "0",
