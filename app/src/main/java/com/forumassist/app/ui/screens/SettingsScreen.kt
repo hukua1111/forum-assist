@@ -1,5 +1,9 @@
 package com.forumassist.app.ui.screens
 
+import android.content.Intent
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -23,6 +27,7 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.outlined.Article
 import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.CleaningServices
+import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -43,6 +48,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.forumassist.app.AppState
@@ -50,6 +56,7 @@ import com.forumassist.app.data.AppLog
 import com.forumassist.app.data.Settings
 import com.forumassist.app.ui.components.SettingRow
 import com.forumassist.app.ui.components.SoftCard
+import androidx.documentfile.provider.DocumentFile
 import com.forumassist.app.ui.theme.AccentPresets
 
 @Composable
@@ -209,6 +216,17 @@ fun SettingsScreen(state: AppState, onBack: () -> Unit, onOpenLogs: () -> Unit =
                     }
                 )
                 SettingRow(
+                    title = "回帖输入框",
+                    desc = if (s.showReplyBar) "正文底部显示「写下你的回复」，可直接回帖"
+                    else "已隐藏，只保留阅读",
+                    trailing = {
+                        Switch(
+                            checked = s.showReplyBar,
+                            onCheckedChange = { state.updateSettings(s.copy(showReplyBar = it)) }
+                        )
+                    }
+                )
+                SettingRow(
                     title = "已读置灰",
                     desc = if (s.readGray) "看过的帖子在列表里变灰" else "所有帖子同样显示",
                     trailing = {
@@ -244,12 +262,47 @@ fun SettingsScreen(state: AppState, onBack: () -> Unit, onOpenLogs: () -> Unit =
             }
 
             SectionLabel("存储")
+            val context = LocalContext.current
+            var dirLabel by remember {
+                mutableStateOf(
+                    state.store.downloadTree()?.let { raw ->
+                        runCatching {
+                            DocumentFile.fromTreeUri(context, Uri.parse(raw))?.name
+                        }.getOrNull()
+                    } ?: ""
+                )
+            }
+            val pickDir = rememberLauncherForActivityResult(
+                ActivityResultContracts.OpenDocumentTree()
+            ) { uri ->
+                if (uri != null) {
+                    runCatching {
+                        context.contentResolver.takePersistableUriPermission(
+                            uri,
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                                Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                        )
+                    }
+                    state.store.saveDownloadTree(uri.toString())
+                    dirLabel = runCatching {
+                        DocumentFile.fromTreeUri(context, uri)?.name
+                    }.getOrNull().orEmpty()
+                    state.notify("附件将保存到这个文件夹")
+                }
+            }
             SoftCard(modifier = Modifier.padding(horizontal = 14.dp)) {
                 SettingRow(
                     title = "清理缓存",
                     desc = "正文、图片、首页列表共占用 ${"%.1f".format(cacheMb)} MB",
                     icon = Icons.Outlined.CleaningServices,
                     onClick = { confirmClear = true }
+                )
+                SettingRow(
+                    title = "附件保存位置",
+                    desc = if (dirLabel.isBlank()) "未选择，点一下挑一个文件夹（购买后的附件下载到这里）"
+                    else "$dirLabel · 点一下可以更换",
+                    icon = Icons.Outlined.FolderOpen,
+                    onClick = { pickDir.launch(null) }
                 )
                 SettingRow(
                     title = "运行日志",

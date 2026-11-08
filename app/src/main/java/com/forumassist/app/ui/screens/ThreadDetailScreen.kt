@@ -2,6 +2,7 @@ package com.forumassist.app.ui.screens
 
 import android.content.Intent
 import android.net.Uri
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -33,6 +34,7 @@ import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.rounded.Send
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -44,6 +46,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -65,6 +69,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.forumassist.app.AppState
+import com.forumassist.app.data.AttachmentSaver
 import com.forumassist.app.data.Block
 import com.forumassist.app.data.Post
 import com.forumassist.app.data.Site
@@ -76,7 +81,9 @@ import com.forumassist.app.ui.components.EmptyState
 import com.forumassist.app.ui.components.HtmlRenderFallback
 import com.forumassist.app.ui.components.SiteAvatar
 import com.forumassist.app.ui.components.TagPill
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun ThreadDetailScreen(
@@ -99,6 +106,9 @@ fun ThreadDetailScreen(
     var rendering by remember { mutableStateOf(false) }
     // 抓取超过 5 秒还没结果：给一个「先用网页模式」的出口，别让人干等
     var slowHint by remember { mutableStateOf(false) }
+    // 附件下载：先弹确认框，避免点一下就默默开始下大文件
+    var pendingFile by remember { mutableStateOf<Block.File?>(null) }
+    var downloading by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val url = "${site.baseUrl}/forum.php?mod=viewthread&tid=${thread.tid}"
@@ -165,6 +175,9 @@ fun ThreadDetailScreen(
         profile.splitLongPost && d != null && d.sections.size == d.posts.size
     }
 
+    val onDownload: (Block.File) -> Unit = { f -> pendingFile = f }
+
+    CompositionLocalProvider(LocalAttachmentDownload provides onDownload) {
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier
@@ -389,12 +402,62 @@ fun ThreadDetailScreen(
         }
 
         val liveSite = state.site(site.id) ?: site
-        ReplyBar(
-            loggedIn = liveSite.loggedIn || liveSite.isDemo,
-            onReply = { if (liveSite.loggedIn || liveSite.isDemo) onReply() else onLogin() }
+        if (state.settings.showReplyBar) {
+            ReplyBar(
+                loggedIn = liveSite.loggedIn || liveSite.isDemo,
+                onReply = { if (liveSite.loggedIn || liveSite.isDemo) onReply() else onLogin() }
+            )
+        }
+    }
+    }
+
+    pendingFile?.let { f ->
+        AlertDialog(
+            onDismissRequest = { if (!downloading) pendingFile = null },
+            title = { Text(f.name, maxLines = 3, overflow = TextOverflow.Ellipsis) },
+            text = {
+                Text(
+                    if (downloading) "正在下载，请稍候…"
+                    else "保存到「设置 → 附件下载」里选的文件夹。\n" +
+                        "如果站点提示需要购买，先点「网页打开」买完再回来下载。"
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !downloading,
+                    onClick = {
+                        val target = f
+                        downloading = true
+                        scope.launch {
+                            val res = withContext(Dispatchers.IO) {
+                                AttachmentSaver.save(
+                                    context = context,
+                                    http = state.client.httpClient,
+                                    url = target.url,
+                                    fileName = target.name,
+                                    referer = referer,
+                                    treeUri = state.store.downloadTree()
+                                )
+                            }
+                            downloading = false
+                            pendingFile = null
+                            Toast.makeText(context, res.message, Toast.LENGTH_LONG).show()
+                        }
+                    }
+                ) { Text(if (downloading) "下载中…" else "下载") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    pendingFile = null
+                    onOpenUrl(f.url)
+                }) { Text("网页打开") }
+            }
         )
     }
 }
+
+/** 附件下载回调：BlockContent 埋在很深的列表里，用 CompositionLocal 传比层层加参数省事 */
+private val LocalAttachmentDownload = staticCompositionLocalOf<(Block.File) -> Unit> { {} }
 
 @Composable
 private fun DetailHead(
@@ -603,15 +666,9 @@ private fun BlockContent(
                 .clip(RoundedCornerShape(12.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
                 .clickable {
-                    // 附件链接（attachpay / attachment）需要登录态和购买记录，
-                    // 丢给外部浏览器只会落到登录页，所以站内 WebView 打开。
-                    if (profile.openAttachmentInApp && block.url.startsWith("http")) {
-                        onOpenUrl(block.url)
-                    } else {
-                        runCatching {
-                            ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(block.url)))
-                        }
-                    }
+                    // 默认走「下载」：带 Cookie 直接抓文件；需要购买的会明确提示，
+                    // 用户可以在弹窗里改用网页模式去买。
+                    LocalAttachmentDownload.current(block)
                 }
                 .padding(12.dp),
             verticalAlignment = Alignment.CenterVertically

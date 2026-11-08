@@ -149,6 +149,36 @@ class Http(private val store: Store) {
         (u.path + if (u.query.isNullOrBlank()) "" else "?" + u.query).take(180)
     }.getOrDefault(url.take(180))
 
+    /**
+     * 下载附件：返回 (Content-Type, 字节, Content-Disposition)。
+     * 拿不到文件时返回 null；Discuz 在未登录/未购买时会返回一个 HTML 提示页，
+     * 调用方要按 Content-Type 判断，不能把提示页当附件存下来。
+     */
+    fun getFile(url: String, referer: String? = null): Triple<String, ByteArray, String>? {
+        val started = System.currentTimeMillis()
+        return try {
+            val builder = Request.Builder().url(url).get()
+                .header("User-Agent", ua)
+                .header("Accept", "*/*")
+                .header("Accept-Language", "zh-CN,zh;q=0.9")
+            referer?.let { builder.header("Referer", it) }
+            okHttpClient.newCall(builder.build()).execute().use { resp ->
+                val ct = resp.header("Content-Type").orEmpty()
+                val cd = resp.header("Content-Disposition").orEmpty()
+                val bytes = resp.body?.bytes()
+                AppLog.d(
+                    "下载",
+                    "GET ${resp.code} ${bytes?.size ?: 0}B ${System.currentTimeMillis() - started}ms " +
+                        "${ct.take(40)} ${shortUrl(url)}"
+                )
+                if (!resp.isSuccessful || bytes == null) null else Triple(ct, bytes, cd)
+            }
+        } catch (t: Throwable) {
+            AppLog.e("下载", "失败 ${shortUrl(url)}", t)
+            null
+        }
+    }
+
     /** 下载二进制内容（如验证码图片） */
     fun getBytes(url: String, referer: String? = null): ByteArray? = runCatching {
         val builder = Request.Builder().url(url).get()

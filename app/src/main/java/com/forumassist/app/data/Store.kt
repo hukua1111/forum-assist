@@ -20,6 +20,8 @@ data class Settings(
     val readGray: Boolean = true,
     /** 正文抓取失败时，用隐藏 WebView 再渲染一次（关掉更省流量、更快，但少数帖子只能走网页模式） */
     val webRenderFallback: Boolean = true,
+    /** 正文底部是否显示「写下你的回复」输入条 */
+    val showReplyBar: Boolean = true,
     val blockedKeywords: List<String> = emptyList(),
     val blockedAuthors: List<String> = emptyList()
 )
@@ -130,6 +132,7 @@ class Store(context: Context) {
                 showComposeButton = o.optBoolean("showComposeButton", true),
                 readGray = o.optBoolean("readGray", true),
                 webRenderFallback = o.optBoolean("webRenderFallback", true),
+                showReplyBar = o.optBoolean("showReplyBar", true),
                 blockedKeywords = o.optJSONArray("blockedKeywords")?.toStringList().orEmpty(),
                 blockedAuthors = o.optJSONArray("blockedAuthors")?.toStringList().orEmpty()
             )
@@ -146,6 +149,7 @@ class Store(context: Context) {
         o.put("showComposeButton", s.showComposeButton)
         o.put("readGray", s.readGray)
         o.put("webRenderFallback", s.webRenderFallback)
+        o.put("showReplyBar", s.showReplyBar)
         o.put("blockedKeywords", JSONArray(s.blockedKeywords))
         o.put("blockedAuthors", JSONArray(s.blockedAuthors))
         sp.edit().putString("settings", o.toString()).apply()
@@ -153,6 +157,15 @@ class Store(context: Context) {
 
     private fun JSONArray.toStringList(): List<String> =
         (0 until length()).mapNotNull { optString(it, "").ifBlank { null } }
+
+    // ------------------------------------------------------------ 附件下载目录
+
+    /** SAF 目录 uri（用户自己选的文件夹），没选过就是 null */
+    fun downloadTree(): String? = sp.getString("download_tree", null)
+
+    fun saveDownloadTree(uri: String?) {
+        sp.edit().apply { if (uri == null) remove("download_tree") else putString("download_tree", uri) }.apply()
+    }
 
     // ------------------------------------------------------------ Cookie
 

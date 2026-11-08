@@ -11,8 +11,8 @@ android {
         applicationId = "com.forumassist.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 19
-        versionName = "1.7.2"
+        versionCode = 20
+        versionName = "1.7.3"
 
         // 只打包 arm64-v8a（v8a），减小体积
         ndk {
@@ -86,6 +86,7 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("androidx.webkit:webkit:1.11.0")
+    implementation("androidx.documentfile:documentfile:1.0.1")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

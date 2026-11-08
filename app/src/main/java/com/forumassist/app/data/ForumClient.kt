@@ -19,6 +19,9 @@ import org.jsoup.nodes.Element
  */
 class ForumClient(private val http: Http) {
 
+    /** 附件下载等场景需要直接复用带 Cookie 的 OkHttp 客户端 */
+    val httpClient: Http get() = http
+
     private fun u(site: Site, path: String): String =
         site.baseUrl.trimEnd('/') + "/" + path.trimStart('/')
 

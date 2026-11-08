@@ -7,8 +7,9 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateList
-import com.forumassist.app.data.Board
 import com.forumassist.app.data.AppLog
+import com.forumassist.app.data.Board
+import com.forumassist.app.data.BoardFilter
 import com.forumassist.app.data.DefaultBoardOrders
 import com.forumassist.app.data.Demo
 import com.forumassist.app.data.ForumClient
@@ -585,9 +586,13 @@ class AppState(context: Context) {
      * 回到前台/切回首页时不再自动刷新——已经读出来的内容就留着，
      * 只有列表为空（冷启动没缓存、或上次全失败）才补一次。
      */
-    fun maybeAutoRefresh(minIntervalMs: Long = 3 * 60 * 1000L) {
+    /**
+     * 回到首页时是否要自动刷新。
+     * 只有距上次刷新超过 10 分钟才动：从正文退回来、切 tab 都不该把列表重拉一遍。
+     * 下拉刷新走 refreshFeed()，不受这个限制。
+     */
+    fun maybeAutoRefresh(minIntervalMs: Long = 10 * 60 * 1000L) {
         if (feedLoading || feedRefreshing) return
-        if (feed.isNotEmpty()) return
         if (System.currentTimeMillis() - store.lastFeedRefresh < minIntervalMs) return
         loadFeed(reset = true)
     }
@@ -612,6 +617,48 @@ class AppState(context: Context) {
         }
         client.threadPage(site, fid, page, orderQuery, typeQuery)
     }
+
+    /**
+     * 版块列表缓存：进正文再退回来不该重新请求，筛选条件也要原样保留。
+     * key = siteId|fid|orderQuery|typeQuery，10 分钟内直接复用。
+     */
+    data class BoardPageCache(
+        val items: List<ThreadSummary>,
+        val orders: List<BoardFilter> = emptyList(),
+        val types: List<BoardFilter> = emptyList(),
+        val ts: Long = 0L,
+        val scrollIndex: Int = 0
+    )
+
+    private val boardPageCache = mutableMapOf<String, BoardPageCache>()
+
+    fun boardCacheKey(siteId: String, fid: String, orderQuery: String, typeQuery: String): String =
+        "$siteId|$fid|$orderQuery|$typeQuery"
+
+    fun cachedBoard(key: String): BoardPageCache? = boardPageCache[key]
+
+    fun putBoard(key: String, entry: BoardPageCache) {
+        boardPageCache[key] = entry
+        // 别无限增长：超过 40 个按时间淘汰最旧的
+        if (boardPageCache.size > 40) {
+            boardPageCache.entries
+                .sortedBy { it.value.ts }
+                .take(boardPageCache.size - 40)
+                .forEach { boardPageCache.remove(it.key) }
+        }
+    }
+
+    /** 手动刷新某一页时把它的缓存丢掉，保证真的重新请求 */
+    fun clearBoardPage(key: String) {
+        boardPageCache.remove(key)
+    }
+
+    fun updateBoardScroll(key: String, index: Int) {
+        boardPageCache[key]?.let { boardPageCache[key] = it.copy(scrollIndex = index) }
+    }
+
+    /** 清缓存时连板块列表缓存一起清掉 */
+    fun clearBoardCache() = boardPageCache.clear()
 
     /** 详情抓取失败时的诊断信息（展示在详情页错误提示里，便于排查） */
     var lastDetailError: String? = null
@@ -823,8 +870,12 @@ class AppState(context: Context) {
         val ok = store.clearCache()
         offline.clear()
         history.clear()
-        // 内存里的正文缓存也要一起清，否则「清完了还能秒开」会让人以为没生效
+        // 内存里的正文 / 板块列表缓存也要一起清，否则「清完了还能秒开」会让人以为没生效
         synchronized(detailCache) { detailCache.clear() }
+        clearBoardCache()
+        boardCache.clear()
+        feedTabs.clear()
+        feed.clear()
         notify(if (ok) "缓存已清理（含正文与图片）" else "已清理，部分文件被占用")
     }
 }

@@ -65,7 +65,9 @@ fun HomeScreen(
         if (state.feed.isEmpty() && !state.feedLoading) state.loadFeed(reset = true)
     }
 
-    // 切页面回来不再自动刷新：内容用缓存的，只有下拉/点刷新才重新请求
+    // 回到首页只做「过期检查」：距上次刷新超过 10 分钟才重新拉，
+    // 从正文退回来、切 tab 都保持原样。下拉刷新不受这个限制。
+    LaunchedEffect(Unit) { state.maybeAutoRefresh() }
 
     val shouldLoadMore by remember {
         derivedStateOf {
