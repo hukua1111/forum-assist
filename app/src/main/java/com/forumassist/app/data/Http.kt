@@ -76,7 +76,7 @@ class PersistentCookieJar(private val store: Store) : CookieJar {
     }
 }
 
-class Http(store: Store) {
+class Http(private val store: Store) {
 
     private val jar = PersistentCookieJar(store)
 
