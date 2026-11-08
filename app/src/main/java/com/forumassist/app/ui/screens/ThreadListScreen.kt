@@ -46,9 +46,11 @@ import com.forumassist.app.ui.components.EmptyState
 import com.forumassist.app.ui.components.ThreadCard
 
 private val DEFAULT_ORDERS = listOf(
-    BoardFilter("lastpost", "最新回复"),
-    BoardFilter("dateline", "最新发表"),
-    BoardFilter("views", "浏览量")
+    BoardFilter("lastpost", "最新"),
+    BoardFilter("heats", "热门"),
+    BoardFilter("dateline", "发帖时间"),
+    BoardFilter("replies", "回复/查看"),
+    BoardFilter("views", "查看")
 )
 
 @Composable

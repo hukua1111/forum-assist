@@ -22,8 +22,10 @@ import com.forumassist.app.data.ThreadDetail
 import com.forumassist.app.data.ThreadPage
 import com.forumassist.app.data.ThreadSummary
 import com.forumassist.app.data.profile
+import com.forumassist.app.data.withSections
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -41,6 +43,14 @@ class AppState(context: Context) {
 
     val sites: SnapshotStateList<Site> = mutableStateListOf()
     val feed: SnapshotStateList<ThreadSummary> = mutableStateListOf()
+
+    /** 每个分栏抓到的内容缓存在内存里，切回来直接复用，不再重新请求 */
+    private val feedTabs = mutableMapOf<Int, List<ThreadSummary>>()
+
+    /** 当前刷新任务：切分栏/重新刷新时作废旧任务，避免旧结果覆盖新界面 */
+    private var feedJob: Job? = null
+    private var feedToken = 0
+
     val favorites: SnapshotStateList<ThreadSummary> = mutableStateListOf()
     /** 固定到底栏「板块」页的版块（快捷访问） */
     val pinnedBoards: SnapshotStateList<PinnedBoard> = mutableStateListOf()
@@ -102,6 +112,15 @@ class AppState(context: Context) {
 
         // 上次是在网页模式里登录的：启动时把登录态补回来
         syncAllLoginStates()
+
+        // 冷启动：先把上次的内容铺上（打开就有东西看），再在后台刷新一次。
+        // 之后切页面/切分栏都只读缓存，不会自动刷。
+        val cachedFeed = store.feedCache(0)
+        if (cachedFeed.isNotEmpty()) {
+            feedTabs[0] = cachedFeed
+            feed.addAll(cachedFeed)
+        }
+        if (sites.any { it.enabled }) loadFeed(reset = true)
     }
 
     /** 尚香书苑判定：名称含「尚香」或域名含 sxsy（地址发布页会换域名） */
@@ -196,7 +215,7 @@ class AppState(context: Context) {
     private val addressTried = mutableMapOf<String, Long>()
     private var resolvingAddress = false
 
-    private fun buildView(): String = when (feedTab) {
+    private fun buildView(tab: Int = feedTab): String = when (tab) {
         1 -> "newreply"
         2 -> "hot"
         else -> "newthread"
@@ -210,101 +229,129 @@ class AppState(context: Context) {
 
     // ------------------------------------------------------------ 首页信息流
 
+    /**
+     * @param reset true=重新抓第一页；false=加载下一页
+     *
+     * 只有「冷启动」「下拉刷新」「点刷新按钮」会走到这里；
+     * 切换分栏/切换页面只读缓存，不会自动重新请求。
+     */
     fun loadFeed(reset: Boolean = true) {
-        if (feedLoading) return
-        scope.launch {
-            feedLoading = true
-            feedRefreshing = true
-            feedError = null
-            if (reset) {
-                feedPage = 1
-                feedEnd = false
-            }
-            val enabled = sites.filter { it.enabled }
-            if (enabled.isEmpty()) {
-                feed.clear()
-                feedError = "还没有启用任何站点，去「论坛」里添加一个吧"
-                feedLoading = false
-                feedRefreshing = false
-                return@launch
-            }
-            var failed = 0
-            val page = feedPage
-            val view = buildView()
-            val collected = coroutineScope {
-                enabled.map { site ->
-                    async(Dispatchers.IO) {
-                        val list = try {
-                            if (site.isDemo) {
-                                Demo.threads()
-                            } else if (page <= 1) {
-                                // 优先读站点首页自带的门户四格；失败则熔断 10 分钟并回退 guide
-                                val now = System.currentTimeMillis()
-                                val portal = if (now >= (portalCoolDown[site.id] ?: 0L)) {
-                                    client.portal(site, view).also {
-                                        if (it.isEmpty()) portalCoolDown[site.id] = now + 10 * 60_000L
-                                    }
-                                } else emptyList()
-                                portal.ifEmpty { client.guide(site, view, page) }
-                            } else {
-                                client.guide(site, view, page)
+        if (!reset && feedLoading) return
+        if (reset) {
+            feedJob?.cancel()
+            feedPage = 1
+            feedEnd = false
+        }
+        val tab = feedTab
+        val page = feedPage
+        val token = ++feedToken
+        // 同步置位，避免首页的 LaunchedEffect 看到 false 又发一次请求
+        feedLoading = true
+        feedRefreshing = true
+        if (reset) feedError = null
+
+        feedJob = scope.launch {
+            try {
+                val enabled = sites.filter { it.enabled }
+                if (enabled.isEmpty()) {
+                    feed.clear()
+                    feedError = "还没有启用任何站点，去「论坛」里添加一个吧"
+                    return@launch
+                }
+                var failed = 0
+                val view = buildView(tab)
+                val collected = coroutineScope {
+                    enabled.map { site ->
+                        async(Dispatchers.IO) {
+                            val list = try {
+                                if (site.isDemo) {
+                                    Demo.threads()
+                                } else if (page <= 1) {
+                                    // 优先读站点首页自带的门户四格；失败则熔断 10 分钟并回退 guide
+                                    val now = System.currentTimeMillis()
+                                    val portal = if (now >= (portalCoolDown[site.id] ?: 0L)) {
+                                        client.portal(site, view).also {
+                                            if (it.isEmpty()) portalCoolDown[site.id] = now + 10 * 60_000L
+                                        }
+                                    } else emptyList()
+                                    portal.ifEmpty { client.guide(site, view, page) }
+                                } else {
+                                    client.guide(site, view, page)
+                                }
+                            } catch (e: Exception) {
+                                emptyList()
                             }
-                        } catch (e: Exception) {
-                            emptyList()
+                            if (list.isEmpty() && !site.isDemo) failed++
+                            list
                         }
-                        if (list.isEmpty() && !site.isDemo) failed++
-                        list
-                    }
-                }.awaitAll()
-            }.flatten()
+                    }.awaitAll()
+                }.flatten()
 
-            val blockedFidSet = enabled.flatMap { it.blockedFids }.toSet()
-            val merged = collected
-                .filterNot { blocked(it) }
-                .filterNot { it.fid.isNotEmpty() && it.fid in blockedFidSet }
-                .distinctBy { it.key }
-                .sortedByDescending { it.ts }
+                val blockedFidSet = enabled.flatMap { it.blockedFids }.toSet()
+                val merged = collected
+                    .filterNot { blocked(it) }
+                    // 置顶（版规/公告）不进信息流
+                    .filterNot { it.isTop }
+                    .filterNot { it.fid.isNotEmpty() && it.fid in blockedFidSet }
+                    .distinctBy { it.key }
+                    .sortedByDescending { it.ts }
 
-            val cached = if (merged.isEmpty()) store.feedCache() else emptyList()
-            val usable = when {
-                merged.isNotEmpty() -> merged
-                cached.isNotEmpty() -> cached
-                // 演示数据只在还有「演示站点」时兜底，否则会点不进正文
-                settings.demoFallback && sites.any { it.isDemo } -> Demo.threads()
-                else -> emptyList()
-            }
+                if (token != feedToken || tab != feedTab) return@launch
 
-            if (reset) feed.clear()
-            feed.addAll(usable.filter { t -> feed.none { it.key == t.key } })
-            feedEnd = usable.isEmpty()
-
-            if (merged.isNotEmpty()) store.saveFeedCache(merged)
-
-            // 全部失败时，尝试从「地址发布页」找最新域名（每站 30 分钟内只试一次）
-            if (merged.isEmpty()) {
-                val now = System.currentTimeMillis()
-                enabled.filter { it.addressPage.isNotBlank() }.forEach { s ->
-                    if (now - (addressTried[s.id] ?: 0L) > 30 * 60_000L) {
-                        addressTried[s.id] = now
-                        refreshAddress(s, silent = true)
-                    }
+                val cached = if (merged.isEmpty()) store.feedCache(tab) else emptyList()
+                val usable = when {
+                    merged.isNotEmpty() -> merged
+                    cached.isNotEmpty() -> cached
+                    // 演示数据只在还有「演示站点」时兜底，否则会点不进正文
+                    settings.demoFallback && sites.any { it.isDemo } -> Demo.threads()
+                    else -> emptyList()
                 }
-            }
 
-            if (merged.isEmpty()) {
-                feedError = if (cached.isNotEmpty()) {
-                    "站点暂时不可用（服务器报错或限流），先显示上次缓存的内容"
-                } else if (usable.isNotEmpty()) {
-                    "真实站点暂时没有抓到内容，当前展示的是内置演示数据"
+                if (reset) {
+                    // 抓不到内容时保留旧列表，别把已经读出来的内容清空
+                    if (usable.isNotEmpty()) {
+                        feed.clear()
+                        feed.addAll(usable.distinctBy { it.key })
+                    }
                 } else {
-                    "没有拿到内容。可能是站点需要登录、开启了防采集，或网络不通。\n试试在「论坛」页用网页模式打开。"
+                    feed.addAll(usable.filter { t -> feed.none { it.key == t.key } })
                 }
-            } else if (failed > 0) {
-                feedError = "$failed 个站点加载失败，已展示其余内容"
+                feedEnd = usable.isEmpty()
+
+                if (merged.isNotEmpty()) {
+                    feedTabs[tab] = merged
+                    store.saveFeedCache(merged, tab)
+                }
+
+                // 全部失败时，尝试从「地址发布页」找最新域名（每站 30 分钟内只试一次）
+                if (merged.isEmpty()) {
+                    val now = System.currentTimeMillis()
+                    enabled.filter { it.addressPage.isNotBlank() }.forEach { s ->
+                        if (now - (addressTried[s.id] ?: 0L) > 30 * 60_000L) {
+                            addressTried[s.id] = now
+                            refreshAddress(s, silent = true)
+                        }
+                    }
+                }
+
+                if (merged.isEmpty()) {
+                    feedError = if (cached.isNotEmpty()) {
+                        "站点暂时不可用（服务器报错或限流），先显示上次缓存的内容"
+                    } else if (usable.isNotEmpty()) {
+                        "真实站点暂时没有抓到内容，当前展示的是内置演示数据"
+                    } else {
+                        "没有拿到内容。可能是站点需要登录、开启了防采集，或网络不通。\n试试在「论坛」页用网页模式打开。"
+                    }
+                } else if (failed > 0) {
+                    feedError = "$failed 个站点加载失败，已展示其余内容"
+                }
+                store.lastFeedRefresh = System.currentTimeMillis()
+            } finally {
+                if (token == feedToken) {
+                    feedLoading = false
+                    feedRefreshing = false
+                }
             }
-            store.lastFeedRefresh = System.currentTimeMillis()
-            feedLoading = false
-            feedRefreshing = false
         }
     }
 
@@ -317,8 +364,23 @@ class AppState(context: Context) {
     fun switchTab(index: Int) {
         if (feedTab == index) return
         feedTab = index
-        feed.clear()
-        loadFeed(reset = true)
+        // 先看内存缓存，再看磁盘缓存；都没有才请求。
+        val cached = feedTabs[index] ?: store.feedCache(index).also {
+            if (it.isNotEmpty()) feedTabs[index] = it
+        }
+        if (cached.isNotEmpty()) {
+            feedJob?.cancel()
+            feed.clear()
+            feed.addAll(cached)
+            feedError = null
+            feedEnd = false
+            feedPage = 1
+            feedLoading = false
+            feedRefreshing = false
+        } else {
+            feed.clear()
+            loadFeed(reset = true)
+        }
     }
 
     // ------------------------------------------------------------ 站点
@@ -430,9 +492,13 @@ class AppState(context: Context) {
         }
     }
 
-    /** 进入首页/回前台时按需自动刷新（默认 3 分钟内不重复刷新） */
+    /**
+     * 回到前台/切回首页时不再自动刷新——已经读出来的内容就留着，
+     * 只有列表为空（冷启动没缓存、或上次全失败）才补一次。
+     */
     fun maybeAutoRefresh(minIntervalMs: Long = 3 * 60 * 1000L) {
         if (feedLoading || feedRefreshing) return
+        if (feed.isNotEmpty()) return
         if (System.currentTimeMillis() - store.lastFeedRefresh < minIntervalMs) return
         loadFeed(reset = true)
     }
@@ -453,9 +519,11 @@ class AppState(context: Context) {
             return@withContext ThreadPage(
                 threads = Demo.threads(name),
                 orders = listOf(
-                    BoardFilter("lastpost", "最新回复"),
-                    BoardFilter("dateline", "最新发表"),
-                    BoardFilter("views", "浏览量")
+                    BoardFilter("lastpost", "最新"),
+                    BoardFilter("heats", "热门"),
+                    BoardFilter("dateline", "发帖时间"),
+                    BoardFilter("replies", "回复/查看"),
+                    BoardFilter("views", "查看")
                 )
             )
         }
@@ -496,16 +564,37 @@ class AppState(context: Context) {
             val online = client.detail(site, tid, page, rawUrl)
             if (online == null) {
                 lastDetailError = client.lastDetailDebug
-                store.loadOffline(site.id, tid)
+                store.loadOffline(site.id, tid)?.withSections()
             } else {
-                if (useCache) cachePut(key, online)
-                online
+                // 段落预切好，阅读页就不用再在主线程上排版几万字
+                val ready = online.withSections()
+                if (useCache) {
+                    cachePut(key, ready)
+                    // 落盘放到后台，别把落盘时间算进「打开正文」的等待里
+                    scope.launch(Dispatchers.IO) { store.saveDetailCache(ready) }
+                }
+                ready
             }
         }
 
-    /** WebView 渲染兜底：用取回的 DOM 解析详情 */
-    fun detailFromHtml(site: Site, tid: String, html: String, page: Int = 1): ThreadDetail? =
-        client.parseDetailHtml(site, tid, page, html)
+    /** 上次解析过的正文：进页面先秒开，再后台刷新（阅读页专用） */
+    suspend fun cachedDetail(site: Site, tid: String): ThreadDetail? = withContext(Dispatchers.IO) {
+        if (!site.profile.cacheDetail) return@withContext null
+        val key = "${site.id}/$tid/1"
+        cacheGet(key) ?: store.loadDetailCache(site.id, tid)?.withSections()?.also { cachePut(key, it) }
+    }
+
+    /** WebView 渲染兜底：用取回的 DOM 解析详情（Jsoup 解析放到后台线程） */
+    suspend fun detailFromHtml(site: Site, tid: String, html: String, page: Int = 1): ThreadDetail? =
+        withContext(Dispatchers.Default) {
+            val parsed = client.parseDetailHtml(site, tid, page, html) ?: return@withContext null
+            val ready = parsed.withSections()
+            if (site.profile.cacheDetail) {
+                cachePut("${site.id}/$tid/$page", ready)
+                scope.launch(Dispatchers.IO) { store.saveDetailCache(ready) }
+            }
+            ready
+        }
 
     suspend fun search(query: String): List<ThreadSummary> = withContext(Dispatchers.IO) {
         val q = query.trim()

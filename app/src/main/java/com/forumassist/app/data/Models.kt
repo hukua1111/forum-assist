@@ -197,7 +197,12 @@ data class ThreadDetail(
     val summary: ThreadSummary,
     val posts: List<Post>,
     val page: Int = 1,
-    val totalPages: Int = 1
+    val totalPages: Int = 1,
+    /**
+     * 长正文按段落拆好的「楼层 → 块」，在 IO 线程预先算好，
+     * 阅读页直接用它喂 LazyColumn，避免在组合阶段排版几万字卡住首帧。
+     */
+    val sections: List<List<Block>> = emptyList()
 )
 
 fun List<ThreadSummary>.toJsonArray(): JSONArray {

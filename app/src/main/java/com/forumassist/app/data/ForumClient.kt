@@ -415,9 +415,22 @@ class ForumClient(private val http: Http) {
         orderBy: String = "lastpost",
         typeId: String = ""
     ): ThreadPage = withContext(Dispatchers.IO) {
+        // Discuz 的排序要靠 filter 参数配合，只给 orderby 会被忽略：
+        // filter=author / reply / heat / lastpost 分别对应 发帖时间 / 回复查看 / 热门 / 最新
+        val filter = when (orderBy) {
+            "dateline" -> "author"
+            "replies", "views" -> "reply"
+            "heats" -> "heat"
+            else -> "lastpost"
+        }
+        // 分类筛选的 filter=typeid 要放在后面，Discuz 取最后一个 filter
         val typePart = if (typeId.isNotBlank()) "&filter=typeid&typeid=$typeId" else ""
         val html = http.get(
-            pageUrl(site, "forum.php?mod=forumdisplay&fid=$fid&orderby=$orderBy$typePart", page)
+            pageUrl(
+                site,
+                "forum.php?mod=forumdisplay&fid=$fid&filter=$filter&orderby=$orderBy$typePart",
+                page
+            )
         ) ?: return@withContext ThreadPage()
         val doc = Jsoup.parse(html, site.baseUrl)
         val (orders, types) = parseFilters(doc)
@@ -438,28 +451,42 @@ class ForumClient(private val http: Http) {
         val typeScope = doc.selectFirst("div.dhnavs_box") ?: doc
 
         val orders = orderScope.select("a[href*=orderby]").mapNotNull { a ->
-            val key = Regex("orderby=([A-Za-z_]+)").find(a.attr("href"))?.groupValues?.get(1)
+            val href = a.attr("href")
+            // 带 dateline= 的是「时间范围」（一天/一周/一个月），不是排序方式
+            if (href.contains("dateline=")) return@mapNotNull null
+            val key = Regex("orderby=([A-Za-z_]+)").find(href)?.groupValues?.get(1)
                 ?: return@mapNotNull null
             val name = a.text().trim()
             // 「全部」这种入口不是排序方式
             if (name.isBlank() || name.startsWith("#") || name == "全部" || name.length > 8) null
             else BoardFilter(key, name)
-        }.distinctBy { it.key }
+        }
+            // 同一个排序可能有好几个别名（「最新」和「最后发表」都是 lastpost），留最短的那个
+            .groupBy { it.key }
+            .map { (_, list) -> list.minByOrNull { it.name.length } ?: list.first() }
 
         val types = typeScope.select("a[href*=typeid]").mapNotNull { a ->
-            val raw = a.text().trim()
             val key = Regex("typeid=(\\d+)").find(a.attr("href"))?.groupValues?.get(1)
                 ?: return@mapNotNull null
+            // 分类名后面跟着这个分类的主题数（如「NTR被绿 35327」），只留名字
+            val name = a.text()
+                .replace('\u00A0', ' ')
+                .replace(Regex("\\s*\\d+\\s*$"), "")
+                .trim()
             // 帖子卡片上的 "#伦理" 标签也带 typeid，这里只要筛选栏里的纯文字项
-            if (raw.isBlank() || raw.startsWith("#") || raw == "全部分类" || raw.length > 10) null
-            else BoardFilter(key, raw)
-        }.distinctBy { it.key }
+            if (name.isBlank() || name.startsWith("#") || name == "全部分类" || name.length > 12) null
+            else BoardFilter(key, name)
+        }
+            .groupBy { it.key }
+            .map { (_, list) -> list.minByOrNull { it.name.length } ?: list.first() }
 
         return (orders.ifEmpty {
             listOf(
-                BoardFilter("lastpost", "最新回复"),
-                BoardFilter("dateline", "最新发表"),
-                BoardFilter("views", "浏览量")
+                BoardFilter("lastpost", "最新"),
+                BoardFilter("heats", "热门"),
+                BoardFilter("dateline", "发帖时间"),
+                BoardFilter("replies", "回复/查看"),
+                BoardFilter("views", "查看")
             )
         }) to types
     }
@@ -522,7 +549,12 @@ class ForumClient(private val http: Http) {
             ).find(text)?.value ?: ""
             val ts = TimeUtil.parse(lastTimeRaw)
             val fid = Regex("fid=(\\d+)").find(href)?.groupValues?.get(1) ?: ""
-            val isTop = box.classNames().any { it.contains("top", true) } || title.startsWith("置顶") ||
+            // 置顶识别：电脑版置顶帖在 tbody#stickthread_xxx 里（行本身没 class），
+            // 手机版是 li.list_top，另外还有图标 / 「置顶」标记等兜底特征
+            val isTop = a.closest("tbody[id^=stickthread], li.list_top, tr.list_top, .list_top") != null ||
+                box.classNames().any { it.contains("top", true) } ||
+                title.startsWith("置顶") ||
+                box.selectFirst("i.tpin, .tpin") != null ||
                 box.selectFirst("em")?.text()?.contains("置顶") == true
             val isDigest = box.selectFirst("img[src*=digest], em")?.text()?.contains("精华") == true
             val isNew = box.classNames().any { it.contains("new", true) }
@@ -621,22 +653,26 @@ class ForumClient(private val http: Http) {
         // 用独立 scope 发请求：OkHttp 的阻塞式调用无法被协程中断，
         // 若挂在调用方的结构化作用域里，最先返回后还要等其余请求跑完，等于白并发。
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        val first = CompletableDeferred<ThreadDetail>()
+        // null 表示「全部入口都试完了但没拿到」，用来提前结束，而不是干等到超时
+        val first = CompletableDeferred<ThreadDetail?>()
+        val left = java.util.concurrent.atomic.AtomicInteger(candidates.size)
 
         fun fire(url: String) {
             scope.launch {
                 val parsed = runCatching { fetchDetail(url, site, tid, page) }.getOrNull()
-                if (parsed != null) first.complete(parsed)
+                if (parsed != null) {
+                    first.complete(parsed)
+                } else if (left.decrementAndGet() == 0) {
+                    first.complete(null)
+                }
             }
         }
 
         try {
-            fire(candidates.first())
-            var hit: ThreadDetail? = withTimeoutOrNull(2_500L) { first.await() }
-            if (hit == null) {
-                candidates.drop(1).forEach { fire(it) }
-                hit = withTimeoutOrNull(9_500L) { first.await() }
-            }
+            // 全部入口同时发：以前先给第一个 2.5 秒，失败了才并发，等于白等 2.5 秒。
+            // 正常一两个入口就能拿到正文，剩下的在命中后立即取消。
+            candidates.forEach { fire(it) }
+            val hit = withTimeoutOrNull(6_500L) { first.await() }
             lastDetailDebug = hit?.let { "成功：${it.posts.size} 楼（并发探测）" }
                 ?: diag.toString().ifBlank { "并发探测 ${candidates.size} 个入口均未拿到正文" }
             return hit

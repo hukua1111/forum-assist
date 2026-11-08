@@ -65,8 +65,7 @@ fun HomeScreen(
         if (state.feed.isEmpty() && !state.feedLoading) state.loadFeed(reset = true)
     }
 
-    // 回到首页时按需刷新（3 分钟内不重复）
-    LaunchedEffect(Unit) { state.maybeAutoRefresh() }
+    // 切页面回来不再自动刷新：内容用缓存的，只有下拉/点刷新才重新请求
 
     val shouldLoadMore by remember {
         derivedStateOf {

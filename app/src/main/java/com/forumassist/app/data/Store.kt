@@ -88,8 +88,12 @@ class Store(context: Context) {
         sp.edit().putString(key, list.toJsonArray().toString()).apply()
     }
 
-    fun feedCache(): List<ThreadSummary> = readThreads("feed_cache")
-    fun saveFeedCache(list: List<ThreadSummary>) = writeThreads("feed_cache", list.take(200))
+    /** 首页每个分栏各存一份，切回来直接复用，不再重新请求 */
+    fun feedCache(tab: Int = 0): List<ThreadSummary> =
+        readThreads(if (tab <= 0) "feed_cache" else "feed_cache_$tab")
+
+    fun saveFeedCache(list: List<ThreadSummary>, tab: Int = 0) =
+        writeThreads(if (tab <= 0) "feed_cache" else "feed_cache_$tab", list.take(200))
 
     fun readMarks(): MutableMap<String, Int> {
         val raw = sp.getString("read_marks", null) ?: return mutableMapOf()
@@ -211,6 +215,40 @@ class Store(context: Context) {
             totalPages = o.optInt("totalPages", 1)
         )
     }.getOrNull()
+
+    // ------------------------------------------------------------ 正文读速缓存（非「离线保存」）
+
+    private fun detailCacheDir(): File = File(app.filesDir, "dcache").apply { mkdirs() }
+
+    private fun detailCacheFile(siteId: String, tid: String) =
+        File(detailCacheDir(), siteId.replace("/", "_") + "_" + tid + ".json")
+
+    /** 存一份上次解析好的正文：下次进来可以先秒开，再后台刷新 */
+    fun saveDetailCache(detail: ThreadDetail) {
+        runCatching {
+            val o = JSONObject()
+            o.put("at", System.currentTimeMillis())
+            o.put("summary", detail.summary.toJson())
+            o.put("posts", detail.posts.toPostJsonArray())
+            o.put("page", detail.page)
+            o.put("totalPages", detail.totalPages)
+            detailCacheFile(detail.summary.siteId, detail.summary.tid).writeText(o.toString())
+        }
+    }
+
+    fun loadDetailCache(siteId: String, tid: String, maxAgeMs: Long = 7L * 24 * 60 * 60 * 1000): ThreadDetail? =
+        runCatching {
+            val f = detailCacheFile(siteId, tid)
+            if (!f.exists()) return null
+            val o = JSONObject(f.readText())
+            if (System.currentTimeMillis() - o.optLong("at", 0L) > maxAgeMs) return null
+            ThreadDetail(
+                summary = o.getJSONObject("summary").toThread(),
+                posts = o.getJSONArray("posts").toPosts(),
+                page = o.optInt("page", 1),
+                totalPages = o.optInt("totalPages", 1)
+            )
+        }.getOrNull()
 
     fun deleteOffline(siteId: String, tid: String) {
         offlineFile(siteId, tid).delete()

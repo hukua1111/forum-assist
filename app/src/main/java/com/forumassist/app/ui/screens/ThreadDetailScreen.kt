@@ -48,6 +48,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -75,6 +76,8 @@ import com.forumassist.app.ui.components.EmptyState
 import com.forumassist.app.ui.components.HtmlRenderFallback
 import com.forumassist.app.ui.components.SiteAvatar
 import com.forumassist.app.ui.components.TagPill
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 @Composable
 fun ThreadDetailScreen(
@@ -105,32 +108,60 @@ fun ThreadDetailScreen(
     // 网页模式登录过的账号，进正文后就该是「已登录」
     LaunchedEffect(site.id) { state.syncLoginState(site) }
 
+    val scope = rememberCoroutineScope()
+
     LaunchedEffect(thread.key) {
-        loading = true
-        detail = state.detail(site, thread.tid, 1, thread.url)
+        loading = detail == null
+        error = null
         loadedPage = 1
-        loading = false
-        if (detail == null) {
+
+        // 1) 上次解析过的正文先秒开，不用对着转圈等网络
+        if (profile.cacheDetail && detail == null) {
+            state.cachedDetail(site, thread.tid)?.let {
+                detail = it
+                loading = false
+            }
+        }
+
+        // 2) 网络请求；3.5 秒还没回来就同时拉起站内渲染，谁先到用谁
+        var fresh: ThreadDetail? = null
+        val fetch = launch { fresh = state.detail(site, thread.tid, 1, thread.url) }
+        val timedOut = withTimeoutOrNull(3_500L) { fetch.join() } == null
+        if (timedOut && detail == null && !site.isDemo) {
+            fallbackUrl = thread.url.ifBlank { url }
+            rendering = true
+        }
+        if (timedOut) fetch.join()
+
+        val d = fresh
+        if (d != null) {
+            detail = d
+            error = null
+            loading = false
+            rendering = false
+            fallbackUrl = null // HTTP 已经拿到，关掉隐藏的 WebView
+            state.markRead(thread)
+        } else if (detail == null && !rendering) {
             val diag = state.lastDetailError.orEmpty()
             error = if (site.isDemo) "演示帖不存在"
             else "正文加载失败。该站点可能需要登录，或限制了外部访问。" +
                 if (diag.isBlank()) "" else "\n\n诊断：\n$diag"
+            loading = false
             if (!site.isDemo) {
                 // 自动用隐藏 WebView 真实渲染一次（可过 WAF / JS 签名）
                 fallbackUrl = thread.url.ifBlank { url }
                 rendering = true
             }
-        } else {
-            state.markRead(thread)
         }
     }
 
     val fav = state.isFav(thread.key)
     val offline = state.isOffline(thread.key)
 
-    // 长章节模式：先把正文拆成段落，LazyColumn 才能只排版可视区域
-    val readerPosts = remember(detail, profile.splitLongPost) {
-        detail?.posts?.map { p -> p to splitParagraphs(p.blocks) }.orEmpty()
+    // 长章节模式：段落是在 IO 线程预先切好的，这里直接用，组合阶段零排版开销
+    val splitReady = remember(detail, profile.splitLongPost) {
+        val d = detail
+        profile.splitLongPost && d != null && d.sections.size == d.posts.size
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -222,16 +253,19 @@ fun ThreadDetailScreen(
                 // 尚香书苑加载慢多半卡在等图片/统计脚本，首屏可见就先取 DOM
                 fastExtract = profile.parallelDetail,
                 onHtml = { html ->
-                    val parsed = state.detailFromHtml(site, thread.tid, html)
-                    if (parsed != null && parsed.posts.isNotEmpty()) {
-                        detail = parsed
-                        error = null
-                        state.markRead(thread)
-                    } else {
-                        error = (error ?: "正文加载失败") + "\n\n已尝试站内渲染，仍未能解析出正文。"
+                    // 解析整页 HTML（Jsoup）很吃 CPU，绝不能放在 WebView 回调的主线程上
+                    scope.launch {
+                        val parsed = state.detailFromHtml(site, thread.tid, html)
+                        if (parsed != null && parsed.posts.isNotEmpty()) {
+                            detail = parsed
+                            error = null
+                            state.markRead(thread)
+                        } else {
+                            error = (error ?: "正文加载失败") + "\n\n已尝试站内渲染，仍未能解析出正文。"
+                        }
+                        rendering = false
+                        fallbackUrl = null
                     }
-                    rendering = false
-                    fallbackUrl = null
                 },
                 onFailed = {
                     error = (error ?: "正文加载失败") + "\n\n站内渲染失败，可改用网页模式阅读。"
@@ -242,7 +276,8 @@ fun ThreadDetailScreen(
         }
 
         when {
-            loading || rendering -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            // 已经有缓存内容时先给用户看，别用转圈盖住
+            (loading || rendering) && detail == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     CircularProgressIndicator(modifier = Modifier.size(26.dp), strokeWidth = 2.5.dp)
                     if (rendering) {
@@ -273,8 +308,10 @@ fun ThreadDetailScreen(
                     DetailHead(d, thread, site, offline, showAttCount = profile.richAttachment)
                 }
 
-                if (profile.splitLongPost) {
-                    readerPosts.forEachIndexed { index, (post, blocks) ->
+                if (splitReady) {
+                    val sections = d.sections
+                    d.posts.forEachIndexed { index, post ->
+                        val blocks = sections.getOrElse(index) { post.blocks }
                         item(key = "ph-${post.pid}-${post.floor}") {
                             PostHeadRow(post, site, Color(site.color))
                         }
@@ -286,7 +323,7 @@ fun ThreadDetailScreen(
                                 BlockContent(block, site, profile, referer, onOpenUrl)
                             }
                         }
-                        if (index != readerPosts.lastIndex) {
+                        if (index != d.posts.lastIndex) {
                             item(key = "pd-${post.pid}-${post.floor}") {
                                 HorizontalDivider(
                                     modifier = Modifier.padding(vertical = 6.dp),
@@ -623,40 +660,6 @@ private fun PostImage(url: String, referer: String, modifier: Modifier = Modifie
         contentScale = ContentScale.FillWidth,
         onError = { failed = true }
     )
-}
-
-/**
- * 把一整段超长文本按换行拆成段落，并合并过短的行，
- * 让 LazyColumn 按 item 懒加载（长章节首屏从「整章排版」变成「几段排版」）。
- */
-private fun splitParagraphs(blocks: List<Block>): List<Block> {
-    val out = ArrayList<Block>(blocks.size + 16)
-    for (block in blocks) {
-        if (block !is Block.Text) {
-            out.add(block)
-            continue
-        }
-        val buf = StringBuilder()
-        for (rawLine in block.text.split('\n')) {
-            // Discuz 用 &nbsp; 做首行缩进，NBSP 不属于 Kotlin 的 trim 范围，先换成普通空格
-            val line = rawLine.replace('\u00A0', ' ').trim()
-            if (line.isEmpty()) {
-                if (buf.isNotEmpty()) {
-                    out.add(Block.Text(buf.toString()))
-                    buf.setLength(0)
-                }
-                continue
-            }
-            if (buf.length + line.length > 600) {
-                out.add(Block.Text(buf.toString()))
-                buf.setLength(0)
-            }
-            if (buf.isNotEmpty()) buf.append('\n')
-            buf.append(line)
-        }
-        if (buf.isNotEmpty()) out.add(Block.Text(buf.toString()))
-    }
-    return out
 }
 
 @Composable

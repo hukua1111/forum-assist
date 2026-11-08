@@ -69,7 +69,7 @@ fun HtmlRenderFallback(
                         val wv = view ?: return
                         var tries = 0
                         fun attempt(): Unit {
-                            if (done.get() || tries >= 4) return
+                            if (done.get() || tries >= 8) return
                             tries++
                             wv.evaluateJavascript(DOM_IF_READY_JS) { raw ->
                                 val html = decodeJsString(raw)
@@ -77,11 +77,12 @@ fun HtmlRenderFallback(
                                     done.set(true)
                                     onHtml(html)
                                 } else if (!done.get()) {
-                                    wv.postDelayed({ attempt() }, 500)
+                                    wv.postDelayed({ attempt() }, 320)
                                 }
                             }
                         }
-                        wv.postDelayed({ attempt() }, 300)
+                        // 正文节点一出现就取，不用等图片/统计脚本跑完
+                        wv.postDelayed({ attempt() }, 120)
                     }
 
                     override fun onPageFinished(view: WebView?, u: String?) {
@@ -119,9 +120,13 @@ fun HtmlRenderFallback(
 private const val DOM_JS =
     "(function(){try{return document.documentElement.outerHTML||''}catch(e){return ''}})()"
 
-/** 只在 readyState=complete 时才返回 DOM，避免拿到半成品页面 */
+/** DOM 已可交互且正文节点已出现就返回，不再死等 readyState=complete（那要等所有图片/脚本） */
 private const val DOM_IF_READY_JS =
-    "(function(){try{return document.readyState==='complete'?(document.documentElement.outerHTML||''):''}catch(e){return ''}})()"
+    "(function(){try{" +
+        "if(document.readyState==='loading')return '';" +
+        "var b=document.querySelector('td.t_f, div.t_f, div.message, div.postmessage, [id^=postmessage_]');" +
+        "if(!b||b.textContent.trim().length<2)return '';" +
+        "return document.documentElement.outerHTML||''}catch(e){return ''}})()"
 
 /** evaluateJavascript 返回的是 JSON 字符串字面量，需要反转义 */
 private fun decodeJsString(raw: String?): String? {
