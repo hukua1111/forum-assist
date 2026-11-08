@@ -815,7 +815,7 @@ class ForumClient(private val http: Http) {
                     return@withContext parsed
                 }
             }
-            lastDetailDebug = notes.joinToString("\n").ifBlank { "无可用请求" }
+            lastDetailDebug = notesSnapshot(notes).ifBlank { "无可用请求" }
             AppLog.w("正文", "tid=$tid 第$page 页 抓取失败：$lastDetailDebug")
             null
         }
@@ -891,14 +891,20 @@ class ForumClient(private val http: Http) {
             }
         }
 
-        lastDetailDebug = notes.joinToString("\n")
+        lastDetailDebug = notesSnapshot(notes)
             .ifBlank { "并发探测 ${candidates.size} 个入口均未拿到正文" }
         AppLog.w("正文", "tid=$tid 并发探测失败：$lastDetailDebug")
         return null
     }
 
-    /** 重试用入口：加 _t 打散缓存键，避免再次命中同一个缓存下来的错误页 */
-    private fun retryCandidates(site: Site, tid: String, page: Int): List<String> {
+    /**
+     * 诊断信息快照。并发请求可能还在往列表里写（超时后 OkHttp 的阻塞调用无法中断），
+     * 所以先加锁拷一份再拼字符串，避免 ConcurrentModificationException。
+     */
+    private fun notesSnapshot(notes: MutableList<String>): String =
+        synchronized(notes) { notes.toList() }.joinToString("\n")
+
+    /** 重试用入口：加 _t 打散缓存键，避免再次命中同一个缓存下来的错误页 */    private fun retryCandidates(site: Site, tid: String, page: Int): List<String> {
         val t = System.currentTimeMillis()
         val pageQuery = if (page > 1) "&page=$page" else ""
         return listOf(
