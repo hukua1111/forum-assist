@@ -128,6 +128,56 @@ class ForumClient(private val http: Http) {
             html.contains("Query Error")
     }
 
+    private data class TipMeta(
+        val title: String = "",
+        val author: String = "",
+        val time: String = "",
+        val views: Int = 0,
+        val replies: Int = 0
+    )
+
+    /**
+     * 解析 Discuz 首页四格链接上的 tip 属性。
+     * 形如：标题: <strong>书名 作者：某某[已完结]</strong><br/>作者: 张三 (13 小时前)<br/>查看/回复: 2201/6
+     * 先按 <br> 分段，再逐段匹配，避免标题内的「作者：」干扰。
+     */
+    private fun parseTip(rawTip: String): TipMeta {
+        if (rawTip.isBlank()) return TipMeta()
+        val segs = rawTip.split(Regex("<br\\s*/?>", RegexOption.IGNORE_CASE))
+            .map { Jsoup.parse(it).text().trim() }
+            .filter { it.isNotEmpty() }
+
+        var title = ""
+        var author = ""
+        var time = ""
+        var views = 0
+        var replies = 0
+
+        for (seg in segs) {
+            when {
+                seg.startsWith("标题") -> {
+                    title = seg.replaceFirst(Regex("^标题[:：]\\s*"), "").trim()
+                }
+                seg.startsWith("作者") -> {
+                    val rest = seg.replaceFirst(Regex("^作者[:：]\\s*"), "").trim()
+                    val m = Regex("^(.*?)\\s*[（(]\\s*([^）)]*?)\\s*[）)]\\s*$").find(rest)
+                    if (m != null) {
+                        author = m.groupValues[1].trim()
+                        time = m.groupValues[2].trim()
+                    } else author = rest
+                }
+                seg.contains("查看") && seg.contains("回复") -> {
+                    val m = Regex("(\\d+)\\s*/\\s*(\\d+)").find(seg)
+                    if (m != null) {
+                        views = m.groupValues[1].toIntOrNull() ?: 0
+                        replies = m.groupValues[2].toIntOrNull() ?: 0
+                    }
+                }
+            }
+        }
+        return TipMeta(title, author, time, views, replies)
+    }
+
     fun parsePortal(html: String, site: Site, view: String): List<ThreadSummary> {
         val doc = Jsoup.parse(html, site.baseUrl)
         val boxClass = when (view) {
@@ -147,18 +197,16 @@ class ForumClient(private val http: Http) {
             if (out.containsKey(tid)) continue
 
             // tip 属性: 标题: <strong>xx</strong><br/>作者: 某某 (13 小时前)<br/>查看/回复: 2201/6
-            val tip = Jsoup.parse(a.attr("tip").replace("<br/>", "\n").replace("<br>", "\n")).text()
-            val title = Regex("标题[:：]\\s*(.*?)\\s*作者[:：]", RegexOption.DOT_MATCHES_ALL)
-                .find(tip)?.groupValues?.get(1)?.trim()
-                ?.takeIf { it.isNotBlank() }
-                ?: a.text().trim().ifBlank { a.attr("title").trim() }
+            // 注意：标题里本身常含「作者：」（书名+作者），必须按 <br> 分段解析，
+            // 否则正则会把标题截断到正文里的「作者：」处，作者也会取错。
+            val meta = parseTip(a.attr("tip"))
+            val title = meta.title.ifBlank { a.text().trim().ifBlank { a.attr("title").trim() } }
             if (title.length < 2) continue
 
-            val author = Regex("作者[:：]\\s*(.*?)\\s*[（(]").find(tip)?.groupValues?.get(1)?.trim().orEmpty()
-            val timeRaw = Regex("[（(]\\s*([^）)]{1,20})\\s*[）)]").find(tip)?.groupValues?.get(1)?.trim().orEmpty()
-            val counts = Regex("查看/回复[:：]\\s*(\\d+)\\s*/\\s*(\\d+)").find(tip)
-            val views = counts?.groupValues?.get(1)?.toIntOrNull() ?: 0
-            val replies = counts?.groupValues?.get(2)?.toIntOrNull() ?: 0
+            val author = meta.author
+            val timeRaw = meta.time
+            val views = meta.views
+            val replies = meta.replies
 
             out[tid] = ThreadSummary(
                 siteId = site.id,

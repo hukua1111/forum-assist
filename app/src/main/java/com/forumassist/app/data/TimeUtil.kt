@@ -7,7 +7,8 @@ import java.util.Locale
 object TimeUtil {
 
     fun parse(text: String): Long {
-        val t = text.trim()
+        // nbsp 常出现在「昨天 18:24」这类时间里，先归一化再解析
+        val t = text.replace('\u00A0', ' ').trim()
         if (t.isEmpty()) return 0L
         val now = System.currentTimeMillis()
 
@@ -21,6 +22,14 @@ object TimeUtil {
             return now - it.groupValues[1].toLong() * 3_600_000
         }
         if (t.contains("刚刚")) return now
+        if (t.contains("半小时前") || t.contains("半个小时前")) return now - 30 * 60_000L
+        Regex("(\\d+)\\s*个?半?小时前").find(t)?.let {
+            return now - it.groupValues[1].toLong() * 3_600_000
+        }
+        if (t.contains("前天")) {
+            val cal = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -2) }
+            return cal.timeInMillis
+        }
         if (t.contains("昨天")) {
             val cal = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -1) }
             return cal.timeInMillis
