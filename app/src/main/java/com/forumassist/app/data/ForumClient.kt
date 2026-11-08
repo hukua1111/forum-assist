@@ -863,20 +863,20 @@ class ForumClient(private val http: Http) {
         }
 
         val hit = try {
-            // 错峰发请求：日志里多次出现「3 个入口同时打，全部回 2~3KB 提示页」，
-            // 而隔几秒单发一次的 page=2 却拿到整页——站点对并发很敏感。
-            // 现在先打最可能命中的列表原链，之后每 900ms 补一个入口，命中即停。
+            // 错峰发请求：3 个入口同时打，站点容易统一回 2~3KB 提示页。
+            // 但间隔不能太长——首个入口失败的话，等 0.9 秒才发第二个，用户已经在盯着转圈了。
+            // 现在 350ms 补一个，命中即停；WebView 那边 500ms 就开始并行，两条路谁快用谁。
             candidates.forEachIndexed { index, url ->
                 if (index == 0) {
                     fire(url)
                 } else {
                     scope.launch {
-                        delay(900L * index)
+                        delay(350L * index)
                         if (!first.isCompleted) fire(url)
                     }
                 }
             }
-            withTimeoutOrNull(7_500L) { first.await() }
+            withTimeoutOrNull(5_000L) { first.await() }
         } finally {
             scope.cancel()
         }
@@ -888,8 +888,9 @@ class ForumClient(private val http: Http) {
         }
 
         // 第二轮：站点偶尔会先回一个提示页（防盗链/频率限制/CDN 把错误页缓存到了这个 URL），
-        // 隔一秒带上时间戳换一条 URL 再要一次，多数能拿到正常页；仍然失败才算真失败。
-        delay(1_000L)
+        // 换一条 URL 再要一次，多数能拿到正常页；仍然失败才算真失败。
+        // 等 400ms 而不是 1 秒——站内渲染已经在并行跑了，这里只是补一刀。
+        delay(400L)
         for (url in retryCandidates(site, tid, page)) {
             val parsed = runCatching { fetchDetail(url, site, tid, page, notes) }.getOrNull()
             if (parsed != null) {

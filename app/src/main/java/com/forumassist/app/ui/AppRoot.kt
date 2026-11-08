@@ -144,6 +144,8 @@ fun AppRoot() {
             ) {
                 // 点开即算已读：不用等正文抓取成功，返回列表就是灰的
                 val openThread: (ThreadSummary) -> Unit = { t ->
+                    // 先把请求发出去，导航动画那段时间也用来等网络
+                    state.prefetchDetail(t)
                     state.markRead(t)
                     nav.navigate(threadRoute(t))
                 }

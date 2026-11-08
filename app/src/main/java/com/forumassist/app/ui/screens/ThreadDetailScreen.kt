@@ -3,6 +3,11 @@ package com.forumassist.app.ui.screens
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -67,6 +72,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -165,23 +171,52 @@ fun ThreadDetailScreen(
             }
         }
 
-        // 2) 网络请求。以前 3.5 秒没回来就同时拉起 WebView，
-        //    两个请求抢同一条带宽，反而把 HTTP 拖慢；现在只在抓取失败时才渲染。
-        val fresh = state.detail(site, thread.tid, 1, thread.url)
+        // 2) 与站内渲染并行。站点对详情页的拦截很随机，直接抓的成功率只有两成上下，
+        //    以前要等整套超时 + 重试跑完（5~8 秒）才拉起 WebView，等于白等。
+        //    现在 500 ms 还没内容就让渲染器先起跑，谁先拿到正文用谁。
+        if (!site.isDemo && state.settings.webRenderFallback && detail == null) {
+            launch {
+                // 已知这个站点的详情页只能靠 JS 渲染，就别再让 HTTP 抢跑了
+                if (!state.isRenderFirst(site.id)) kotlinx.coroutines.delay(500L)
+                if (detail == null && fallbackUrl == null) {
+                    com.forumassist.app.data.AppLog.d(
+                        "正文",
+                        "tid=${thread.tid} 站内渲染起跑（${if (state.isRenderFirst(site.id)) "直连" else "500ms"}）"
+                    )
+                    fallbackUrl = thread.url.ifBlank { url }
+                    rendering = true
+                }
+            }
+        }
+
+        // 3) 网络请求。点列表时可能已经在跑了，这里 await 同一份任务，不会重复发。
+        //    已知只能靠 JS 渲染的站点，让 WebView 先跑一秒半——HTTP 那点命中率不值得
+        //    和它抢同一条连接。
+        if (detail == null && state.isRenderFirst(site.id)) kotlinx.coroutines.delay(1_500L)
+        val fresh = if (detail != null) null else runCatching {
+            state.detailDeferred(site, thread.tid, 1, thread.url).await()
+        }.getOrNull()
         if (fresh != null) {
-            detail = fresh
+            // 渲染器可能先返回了，别用更晚到的 HTTP 结果覆盖它
+            if (detail == null) detail = fresh
             error = null
             loading = false
             rendering = false
             fallbackUrl = null
             state.markRead(thread)
         } else if (detail == null) {
+            // 渲染器还在跑就先别报错：错误页会把「正在加载」盖掉，让人以为已经失败了
+            if (rendering) {
+                // HTTP 已经明确失败、渲染器还在跑 → 这站的详情基本只能走 JS，记下来
+                state.markRenderFirst(site.id)
+                return@LaunchedEffect
+            }
             val diag = state.lastDetailError.orEmpty()
             error = if (site.isDemo) "演示帖不存在"
             else "正文加载失败。该站点可能需要登录，或限制了外部访问。" +
                 if (diag.isBlank()) "" else "\n\n诊断：\n$diag"
             loading = false
-            if (!site.isDemo && state.settings.webRenderFallback) {
+            if (!site.isDemo && state.settings.webRenderFallback && fallbackUrl == null) {
                 // 自动用隐藏 WebView 真实渲染一次（可过 WAF / JS 签名）
                 com.forumassist.app.data.AppLog.w(
                     "正文",
@@ -305,6 +340,12 @@ fun ThreadDetailScreen(
                 onHtml = { html ->
                     // 解析整页 HTML（Jsoup）很吃 CPU，绝不能放在 WebView 回调的主线程上
                     scope.launch {
+                        // HTTP 可能已经先拿到了正文，这份渲染结果就没必要再解析一遍
+                        if (detail != null) {
+                            rendering = false
+                            fallbackUrl = null
+                            return@launch
+                        }
                         val parsed = state.detailFromHtml(site, thread.tid, html)
                         if (parsed != null && parsed.posts.isNotEmpty()) {
                             com.forumassist.app.data.AppLog.d(
@@ -354,31 +395,57 @@ fun ThreadDetailScreen(
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Spacer(Modifier.weight(1f))
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    CircularProgressIndicator(modifier = Modifier.size(26.dp), strokeWidth = 2.5.dp)
-                    if (rendering) {
-                        Spacer(Modifier.height(10.dp))
-                        Text(
-                            "正在用站内渲染加载正文…",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    if (slowHint) {
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            "网络有点慢，可以先用网页模式看",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        TextButton(onClick = onOpenWeb) { Text("改用网页模式") }
-                    }
+                Spacer(Modifier.height(22.dp))
+                // 骨架屏：先把「作者行 + 正文段落」的版式占住。
+                // 一整屏空白转圈会让人觉得卡死了，灰条则像「马上就有」，
+                // 正文到达时也不会整体跳动。
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.12f))
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    SkeletonBar(width = 86.dp)
                 }
+                Spacer(Modifier.height(16.dp))
+                SkeletonBar(fraction = 1f)
+                Spacer(Modifier.height(9.dp))
+                SkeletonBar(fraction = 0.94f)
+                Spacer(Modifier.height(9.dp))
+                SkeletonBar(fraction = 0.98f)
+                Spacer(Modifier.height(9.dp))
+                SkeletonBar(fraction = 0.72f)
+                Spacer(Modifier.height(20.dp))
+                SkeletonBar(fraction = 1f)
+                Spacer(Modifier.height(9.dp))
+                SkeletonBar(fraction = 0.9f)
+                Spacer(Modifier.height(9.dp))
+                SkeletonBar(fraction = 0.55f)
+
                 Spacer(Modifier.weight(1f))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = if (rendering) "正在用站内渲染读取页面…" else "正在读取帖子…",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (slowHint) {
+                    Spacer(Modifier.height(4.dp))
+                    TextButton(
+                        onClick = onOpenWeb,
+                        modifier = Modifier.align(Alignment.CenterHorizontally)
+                    ) { Text("网络有点慢，先用网页模式", style = MaterialTheme.typography.labelSmall) }
+                }
+                Spacer(Modifier.height(26.dp))
             }
 
             detail == null -> EmptyState(
@@ -687,6 +754,25 @@ private fun TextReaderDialog(
 private val Block.File.needsPay: Boolean
     get() = meta.contains("需购买") || meta.contains("售价") ||
         meta.contains("金币") || meta.contains("金钱") || meta.contains("购买")
+
+/** 骨架屏灰条：呼吸式明暗，避免看起来像静止的占位块 */
+@Composable
+private fun SkeletonBar(width: Dp? = null, fraction: Float = 1f, height: Dp = 12.dp) {
+    val transition = rememberInfiniteTransition(label = "skeleton")
+    val alpha by transition.animateFloat(
+        initialValue = 0.08f,
+        targetValue = 0.18f,
+        animationSpec = infiniteRepeatable(tween(850), RepeatMode.Reverse),
+        label = "skeletonAlpha"
+    )
+    Box(
+        modifier = Modifier
+            .then(if (width != null) Modifier.width(width) else Modifier.fillMaxWidth(fraction))
+            .height(height)
+            .clip(RoundedCornerShape(6.dp))
+            .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha))
+    )
+}
 
 @Composable
 private fun DetailHead(

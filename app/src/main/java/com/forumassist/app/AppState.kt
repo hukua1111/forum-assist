@@ -27,6 +27,7 @@ import com.forumassist.app.data.boardOrderQuery
 import com.forumassist.app.data.profile
 import com.forumassist.app.data.withSections
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -723,8 +724,61 @@ class AppState(context: Context) {
             }
         }
 
-    /** 上次解析过的正文：进页面先秒开，再后台刷新（阅读页专用） */
-    suspend fun cachedDetail(site: Site, tid: String): ThreadDetail? = withContext(Dispatchers.IO) {
+    /**
+     * 同一条帖子的详情请求只发一次。
+     *
+     * 列表点开时就先发起（[prefetchDetail]），导航动画那两三百毫秒也用来等网络；
+     * 详情页进来后 await 同一个 Deferred，不会重复打站点，也不会出现
+     * 「列表点了、详情页又从头发一遍」的双份等待。
+     */
+    private val detailJobs = HashMap<String, Deferred<ThreadDetail?>>()
+
+    fun detailDeferred(
+        site: Site,
+        tid: String,
+        page: Int = 1,
+        rawUrl: String? = null
+    ): Deferred<ThreadDetail?> {
+        val key = "${site.id}/$tid/$page"
+        synchronized(detailJobs) {
+            // 还在跑的请求直接复用；已经结束的（哪怕失败）重新发，重试才有意义
+            detailJobs[key]?.let { if (!it.isCompleted) return it }
+            val job = scope.async(Dispatchers.IO) {
+                // 包一层：预取场景没人 await，异常不该冒到 Job 上
+                runCatching { detail(site, tid, page, rawUrl) }.getOrNull()
+            }
+            detailJobs[key] = job
+            job.invokeOnCompletion {
+                synchronized(detailJobs) { if (detailJobs[key] === job) detailJobs.remove(key) }
+            }
+            return job
+        }
+    }
+
+    /** 列表点开时预取正文：命中缓存、演示站、未开缓存的站点直接跳过 */
+    fun prefetchDetail(t: ThreadSummary) {
+        val site = site(t.siteId) ?: return
+        if (site.isDemo || !site.profile.cacheDetail) return
+        // 只能靠渲染的站点，HTTP 只有一成多的命中率，别提前抢带宽拖慢 WebView
+        if (isRenderFirst(site.id)) return
+        if (cacheGet("${site.id}/${t.tid}/1") != null) return
+        detailDeferred(site, t.tid, 1, t.url)
+    }
+
+    /**
+     * 详情页只能靠 JS 渲染的站点（链接由页面脚本临时加签名，HTTP 永远拿不到）。
+     * 记住之后，下一条帖子直接让 WebView 起跑，不再先空等半秒 HTTP。
+     */
+    private val renderFirstSites = mutableSetOf<String>()
+
+    fun markRenderFirst(siteId: String) {
+        synchronized(renderFirstSites) { renderFirstSites.add(siteId) }
+    }
+
+    fun isRenderFirst(siteId: String): Boolean =
+        synchronized(renderFirstSites) { siteId in renderFirstSites }
+
+    /** 上次解析过的正文：进页面先秒开，再后台刷新（阅读页专用） */    suspend fun cachedDetail(site: Site, tid: String): ThreadDetail? = withContext(Dispatchers.IO) {
         if (!site.profile.cacheDetail) return@withContext null
         val key = "${site.id}/$tid/1"
         cacheGet(key) ?: store.loadDetailCache(site.id, tid)?.withSections()?.also { cachePut(key, it) }
