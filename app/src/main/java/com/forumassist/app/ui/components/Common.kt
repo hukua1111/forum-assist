@@ -150,6 +150,29 @@ fun ThreadCard(
                 lineHeight = 23.sp
             )
 
+            // 分类 + 标签：跟列表页一样带出来，方便一眼筛掉不想看的题材
+            val shownTags = thread.tags.take(3)
+            if (thread.typeName.isNotBlank() || shownTags.isNotEmpty()) {
+                Spacer(Modifier.height(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (thread.typeName.isNotBlank()) {
+                        TagPill(thread.typeName, cs.tertiary)
+                        Spacer(Modifier.width(4.dp))
+                    }
+                    shownTags.forEach { tag ->
+                        TagPill("#$tag", cs.secondary)
+                        Spacer(Modifier.width(4.dp))
+                    }
+                    if (thread.tags.size > shownTags.size) {
+                        Text(
+                            text = "+${thread.tags.size - shownTags.size}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = cs.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
             Spacer(Modifier.height(10.dp))
 
             Row(verticalAlignment = Alignment.CenterVertically) {

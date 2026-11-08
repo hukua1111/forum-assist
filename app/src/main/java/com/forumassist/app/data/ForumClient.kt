@@ -470,6 +470,13 @@ class ForumClient(private val http: Http) {
             val timeRaw = meta.time
             val views = meta.views
             val replies = meta.replies
+            // 四格的 li 里如果带 #标签 也一并取出来
+            val tags = a.closest("li")?.select("a.tag-required-tag")
+                ?.map { it.text().trim().removePrefix("#").trim() }
+                ?.filter { it.isNotBlank() && it.length <= 12 }
+                ?.distinct()
+                ?.take(4)
+                .orEmpty()
 
             out[tid] = ThreadSummary(
                 siteId = site.id,
@@ -481,7 +488,8 @@ class ForumClient(private val http: Http) {
                 views = views,
                 lastTime = timeRaw,
                 ts = TimeUtil.parse(timeRaw),
-                url = runCatching { a.absUrl("href") }.getOrDefault("").ifBlank { href }
+                url = runCatching { a.absUrl("href") }.getOrDefault("").ifBlank { href },
+                tags = tags
             )
         }
         return out.values.toList()
@@ -512,12 +520,13 @@ class ForumClient(private val http: Http) {
         orderQuery: String = "",
         typeQuery: String = ""
     ): ThreadPage = withContext(Dispatchers.IO) {
-        val query = listOf(orderQuery.trim(), typeQuery.trim())
-            .filter { it.isNotEmpty() }
-            .joinToString("&")
-        val path = "forum.php?mod=forumdisplay&fid=$fid" + if (query.isEmpty()) "" else "&$query"
+        val query = mergeBoardQuery(orderQuery, typeQuery)
+        // 必须显式要电脑版：站点默认可能回手机模板，手机模板没有 a.xst / tbody#normalthread 这套结构
+        val path = "forum.php?mod=forumdisplay&fid=$fid&mobile=no" +
+            if (query.isEmpty()) "" else "&$query"
         val url = pageUrl(site, path, page)
         lastListIssue = null
+        AppLog.d("板块", "请求 fid=$fid 第$page 页 ${query.ifBlank { "全部" }}")
         val html = http.get(url, referer = u(site, "forum.php"))
         if (html == null) {
             lastListIssue = "请求失败：网络不通或站点无响应"
@@ -541,16 +550,77 @@ class ForumClient(private val http: Http) {
         }
         ThreadPage(
             threads = threads,
-            // 第一层排序是固定的（DefaultBoardOrders），这里只需解析第二层分类
-            orders = if (page <= 1) DefaultBoardOrders else emptyList(),
+            orders = if (page <= 1) parseOrders(doc) else emptyList(),
             types = if (page <= 1) parseTypes(doc) else emptyList()
         )
     }
 
     /**
+     * 拼「排序 + 分类」的查询串。
+     *
+     * Discuz 的 `filter` 只能有一个值：`filter=typeid` 和 `filter=lastpost` 同时出现时，
+     * 服务端只认最后一个，排序就失效了。所以选了分类时，分类的 filter 优先，
+     * 排序只保留 `orderby=`（Discuz 允许 `filter=typeid&typeid=3&orderby=lastpost` 这样组合）。
+     */
+    private fun mergeBoardQuery(orderQuery: String, typeQuery: String): String {
+        val order = orderQuery.trim()
+        val type = typeQuery.trim()
+        if (type.isEmpty()) return order
+        if (order.isEmpty()) return type
+        // 分类优先；排序只保留 orderby（filter 已被分类占用）
+        val orderType = Regex("typeid=(\\d+)").find(type)?.groupValues?.get(1)
+        val keep = order.split("&").filter { it.startsWith("orderby=") }
+        val base = "filter=typeid" + if (orderType != null) "&typeid=$orderType" else ""
+        return (listOf(base) + keep).filter { it.isNotBlank() }.joinToString("&")
+    }
+
+    /**
+     * 解析第一层排序。
+     *
+     * 直接拿页面链接里的 query 原文当参数，绝不自己翻译 orderby：
+     * 尚香的实际入口是
+     *   最新 `filter=lastpost&orderby=lastpost`
+     *   热门 `filter=heat&orderby=heats`
+     *   热帖 `filter=hot`
+     *   精华 `filter=digest&digest=1`
+     * 以前按 orderby 反推 filter（dateline→author 之类），服务端不认，点了跟没点一样。
+     * 带 `dateline=` 的是「全部时间/一天/一周」时间范围，带 `specialtype=` 的是悬赏，都不是排序。
+     */
+    private fun parseOrders(doc: Document): List<BoardFilter> {
+        val scopes = listOfNotNull(
+            doc.selectFirst("#threadlist div.tf"),
+            doc.selectFirst("div.tf"),
+            doc.selectFirst("div.dhnav_box")
+        )
+        val found = LinkedHashMap<String, BoardFilter>()
+        val skip = setOf("新窗", "更多", "全部主题", "显示置顶", "全部悬赏", "全部时间")
+        for (scope in scopes) {
+            for (a in scope.select("a[href]")) {
+                val href = a.attr("href")
+                if (!href.contains("filter=")) continue
+                if (href.contains("dateline=") || href.contains("specialtype=")) continue
+                val name = a.text().trim()
+                if (name.isBlank() || name.length > 6 || name in skip) continue
+                val query = href.substringAfter("?", "")
+                    .split("&")
+                    .filter {
+                        it.startsWith("filter=") || it.startsWith("orderby=") || it.startsWith("digest=")
+                    }
+                    .joinToString("&")
+                if (query.isBlank()) continue
+                if (found.values.any { it.query == query }) continue
+                found[query] = BoardFilter(query, name, query)
+            }
+            if (found.isNotEmpty()) break
+        }
+        return if (found.isEmpty()) DefaultBoardOrders
+        else listOf(BoardFilter("", "全部", "")) + found.values.toList()
+    }
+
+    /**
      * 解析分类筛选栏（第二层）。
      *
-     * 手机版在 `.dhnavs_box` 里，电脑版是 `#threadlist` 上方的一列 ul。
+     * 电脑版在 `ul#thread_types`（`li > a`，名字后面跟着主题数），手机版在 `.dhnavs_box`。
      * 限定不到范围就全页扫描，再靠命名规则把帖子卡片上的「#标签」排掉。
      */
     private fun parseTypes(doc: Document): List<BoardFilter> {
@@ -565,16 +635,18 @@ class ForumClient(private val http: Http) {
                     .replace(Regex("\\s*\\d+\\s*$"), "")
                     .trim()
             }
+            // ownText 也可能是「NTR被绿 35327」（数字是纯文本节点），再剥一次
+            name = name.replace(Regex("\\s*\\d+\\s*$"), "").trim()
             if (name.isBlank() || name.startsWith("#") || name == "全部分类" || name.length > 12) null
             else BoardFilter(key, name, "filter=typeid&typeid=$key")
         }
 
-        // 先按已知位置找（手机版 .dhnavs_box / 电脑版 #threadlist 外层），找不到再全页扫
-        val scoped = doc.selectFirst("div.dhnavs_box")
-            ?.let { collect(it) }
-            ?: doc.selectFirst("#threadlist")?.parent()?.let { collect(it) }
-            ?: emptyList()
-        val list = scoped.ifEmpty { collect(doc) }
+        val scoped = listOfNotNull(
+            doc.selectFirst("ul#thread_types"),
+            doc.selectFirst("div.dhnavs_box"),
+            doc.selectFirst("#threadlist")?.parent()
+        ).firstNotNullOfOrNull { root -> collect(root).takeIf { it.isNotEmpty() } }
+        val list = scoped ?: collect(doc)
         return list
             .groupBy { it.key }
             .map { (_, group) -> group.minByOrNull { it.name.length } ?: group.first() }
@@ -662,6 +734,17 @@ class ForumClient(private val http: Http) {
                 box.selectFirst("em")?.text()?.contains("置顶") == true
             val isDigest = box.selectFirst("img[src*=digest], em")?.text()?.contains("精华") == true
             val isNew = box.classNames().any { it.contains("new", true) }
+            // 标题前的 [纯爱] 是版块分类
+            val typeName = box.selectFirst("th em a[href*=typeid], em a[href*=typeid]")
+                ?.text()?.trim()
+                ?.takeIf { it.isNotBlank() && it.length <= 12 && !it.contains("置顶") }
+                .orEmpty()
+            // 标题后的 #ntl #母女花 是标签，卡片上照原样带出来
+            val tags = box.select("a.tag-required-tag")
+                .map { it.text().trim().removePrefix("#").trim() }
+                .filter { it.isNotBlank() && it.length <= 12 }
+                .distinct()
+                .take(4)
 
             map[tid] = ThreadSummary(
                 siteId = site.id,
@@ -678,7 +761,9 @@ class ForumClient(private val http: Http) {
                 isDigest = isDigest,
                 isNew = isNew,
                 ts = ts,
-                url = runCatching { a.absUrl("href") }.getOrDefault("").ifBlank { href }
+                url = runCatching { a.absUrl("href") }.getOrDefault("").ifBlank { href },
+                typeName = typeName,
+                tags = tags
             )
         }
         return map.values.toList()

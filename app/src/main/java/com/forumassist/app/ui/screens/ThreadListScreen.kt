@@ -18,6 +18,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -57,12 +58,14 @@ fun ThreadListScreen(
     onBack: () -> Unit,
     onOpenThread: (ThreadSummary) -> Unit,
     onCompose: () -> Unit,
-    onLogin: () -> Unit = {}
+    onLogin: () -> Unit = {},
+    onOpenWeb: () -> Unit = {}
 ) {
     // 第一层用 key 记选中项，真正请求用的是它的 query（页面链接原文）
     var orderKey by remember(fid, site.id) { mutableStateOf("") }
     var typeKey by remember(fid, site.id) { mutableStateOf("") }
-    val orders = DEFAULT_ORDERS
+    // 第一层排序以页面解析结果为准（不同版块入口不同），拿不到才用兜底
+    var orders by remember(fid, site.id) { mutableStateOf(DEFAULT_ORDERS) }
     // 换版块时分类列表要重来，否则会带着上一个版块的 typeid 去请求
     var types by remember(fid, site.id) { mutableStateOf<List<BoardFilter>>(emptyList()) }
     var items by remember { mutableStateOf<List<ThreadSummary>>(emptyList()) }
@@ -86,19 +89,20 @@ fun ThreadListScreen(
         // 立刻清空：以前保留旧列表且不显示任何加载状态，
         // 点筛选看起来像「界面没刷新」，其实只是新数据还没回来
         items = emptyList()
-        runCatching { listState.scrollToItem(0) }
+        com.forumassist.app.data.AppLog.d("板块", "进入 fid=$fid 排序=${orderKey.ifBlank { "全部" }} 分类=${typeKey.ifBlank { "全部" }}")
 
         try {
             val orderQuery = orders.firstOrNull { it.key == orderKey }?.query.orEmpty()
             val typeQuery = types.firstOrNull { it.key == typeKey }?.query.orEmpty()
             // 硬超时：网络卡住时也要把转圈收掉，给用户一个明确的出口
-            val data = kotlinx.coroutines.withTimeoutOrNull(20_000L) {
+            val data = kotlinx.coroutines.withTimeoutOrNull(15_000L) {
                 state.threadPage(site, fid, 1, orderQuery, typeQuery)
             }
             if (data == null) {
-                error = "加载超时（20 秒）。可能是站点响应慢，或登录态已失效。\n可以下拉重试，或用右上角网页模式打开。"
+                error = "加载超时（15 秒）。可能是站点响应慢、被 Cloudflare 拦了，或登录态已失效。\n点「重新加载」再试，或先用网页模式打开。"
             } else {
                 items = data.threads
+                if (data.orders.isNotEmpty()) orders = data.orders
                 if (data.types.isNotEmpty()) types = data.types
                 end = data.threads.isEmpty()
                 if (data.threads.filterNot { it.isTop }.isEmpty()) {
@@ -117,6 +121,13 @@ fun ThreadListScreen(
             error = "加载失败：" + (e.message ?: "未知错误")
         } finally {
             loading = false
+        }
+
+        // 只有列表真的渲染出来（loading=false 且非空）才滚：
+        // LazyColumn 未组合时调用 scrollToItem 会一直挂起，整个协程卡死，
+        // 表现就是「进版块一直转圈、日志里连请求都没有」。
+        if (items.isNotEmpty()) {
+            kotlinx.coroutines.withTimeoutOrNull(800L) { listState.scrollToItem(0) }
         }
     }
 
@@ -173,6 +184,14 @@ fun ThreadListScreen(
                         text = site.name,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                // 抓取卡住 / 被拦截时的应急出口：直接用站内浏览器看这一页
+                IconButton(onClick = onOpenWeb) {
+                    Icon(
+                        Icons.Outlined.Language,
+                        "用网页模式打开",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }

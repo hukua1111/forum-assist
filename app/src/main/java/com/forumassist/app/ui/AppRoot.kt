@@ -256,7 +256,16 @@ fun AppRoot() {
                             onBack = { nav.popBackStack() },
                             onOpenThread = openThread,
                             onCompose = { nav.navigate("compose/${site.id}?fid=$fid") },
-                            onLogin = { nav.navigate("login/${site.id}") }
+                            onLogin = { nav.navigate("login/${site.id}") },
+                            onOpenWeb = {
+                                nav.navigate(
+                                    webRoute(
+                                        site,
+                                        site.baseUrl.trimEnd('/') +
+                                            "/forum.php?mod=forumdisplay&fid=$fid&mobile=no"
+                                    )
+                                )
+                            }
                         )
                     }
 

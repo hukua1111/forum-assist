@@ -94,11 +94,15 @@ data class BoardFilter(
  * 不再从页面解析：各模板给出的文案五花八门（还经常出现重复的「查看」），
  * 写死这一套既稳定，又保证每个筛选都真的换了请求参数。
  */
+/**
+ * 第一层排序的兜底项（页面能解析出排序栏时以页面为准）。
+ * query 必须是 Discuz 链接里的原文，别自己翻译 orderby —— 站点只认 filter+orderby 的组合。
+ */
 val DefaultBoardOrders: List<BoardFilter> = listOf(
     BoardFilter("", "全部", ""),
-    BoardFilter("lastpost", "最新回复", "filter=lastpost&orderby=lastpost"),
-    BoardFilter("dateline", "最新发表", "filter=dateline&orderby=dateline"),
+    BoardFilter("lastpost", "最新", "filter=lastpost&orderby=lastpost"),
     BoardFilter("heats", "热门", "filter=heat&orderby=heats"),
+    BoardFilter("hot", "热帖", "filter=hot"),
     BoardFilter("digest", "精华", "filter=digest&digest=1")
 )
 
@@ -156,7 +160,11 @@ data class ThreadSummary(
     val isNew: Boolean = false,
     val ts: Long = 0L,
     /** 列表页里抓到的原始帖子链接（可能带 _dsign 等防采集签名，优先用它请求详情） */
-    val url: String = ""
+    val url: String = "",
+    /** 版块分类名（列表页标题前的 [纯爱] 这种） */
+    val typeName: String = "",
+    /** 帖子标签（标题后的 #ntl #母女花 这类） */
+    val tags: List<String> = emptyList()
 ) {
     val key: String get() = "$siteId/$tid"
 }
@@ -177,6 +185,8 @@ fun ThreadSummary.toJson(): JSONObject = JSONObject().apply {
     put("isNew", isNew)
     put("ts", ts)
     put("url", url)
+    put("typeName", typeName)
+    put("tags", org.json.JSONArray(tags))
 }
 
 fun JSONObject.toThread(): ThreadSummary = ThreadSummary(
@@ -194,7 +204,11 @@ fun JSONObject.toThread(): ThreadSummary = ThreadSummary(
     isDigest = optBoolean("isDigest"),
     isNew = optBoolean("isNew"),
     ts = optLong("ts"),
-    url = optString("url")
+    url = optString("url"),
+    typeName = optString("typeName"),
+    tags = optJSONArray("tags")?.let { arr ->
+        (0 until arr.length()).mapNotNull { i -> arr.optString(i).takeIf { it.isNotBlank() } }
+    } ?: emptyList()
 )
 
 sealed class Block {
