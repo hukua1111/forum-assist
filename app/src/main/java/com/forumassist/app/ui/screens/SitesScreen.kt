@@ -21,6 +21,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Language
+import androidx.compose.material.icons.outlined.Link
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Login
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.rounded.ChevronRight
@@ -154,6 +156,44 @@ private fun SiteRow(
     onLogin: () -> Unit
 ) {
     var menu by remember { mutableStateOf(false) }
+    var showAddressDialog by remember { mutableStateOf(false) }
+    var addressInput by remember { mutableStateOf(site.addressPage) }
+
+    if (showAddressDialog) {
+        AlertDialog(
+            onDismissRequest = { showAddressDialog = false },
+            title = { Text("地址发布页") },
+            text = {
+                Column {
+                    Text(
+                        "填写该站点的地址发布页网址。域名更换时，App 会从这里自动找最新可用地址。",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = addressInput,
+                        onValueChange = { addressInput = it },
+                        label = { Text("例如 https://sxsy.org/") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    state.updateSite(site.copy(addressPage = addressInput.trim()))
+                    showAddressDialog = false
+                    state.notify(if (addressInput.isBlank()) "已清除地址发布页" else "已保存地址发布页")
+                }) { Text("保存") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddressDialog = false }) { Text("取消") }
+            }
+        )
+    }
+
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -216,6 +256,22 @@ private fun SiteRow(
                         text = { Text(if (site.loggedIn) "账号管理" else "登录账号") },
                         leadingIcon = { Icon(Icons.Outlined.Login, null, Modifier.size(18.dp)) },
                         onClick = { menu = false; onLogin() }
+                    )
+                    if (site.addressPage.isNotBlank()) {
+                        DropdownMenuItem(
+                            text = { Text("更新最新地址") },
+                            leadingIcon = { Icon(Icons.Outlined.Refresh, null, Modifier.size(18.dp)) },
+                            onClick = { menu = false; state.refreshAddress(site) }
+                        )
+                    }
+                    DropdownMenuItem(
+                        text = { Text(if (site.addressPage.isBlank()) "设置地址发布页" else "修改地址发布页") },
+                        leadingIcon = { Icon(Icons.Outlined.Link, null, Modifier.size(18.dp)) },
+                        onClick = {
+                            menu = false
+                            addressInput = site.addressPage
+                            showAddressDialog = true
+                        }
                     )
                     DropdownMenuItem(
                         text = { Text("删除站点") },

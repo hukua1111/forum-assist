@@ -61,6 +61,21 @@ class AppState(context: Context) {
             sites.addAll(defaultSites())
             store.saveSites(sites)
         }
+        // 老版本添加过的站点：补上已知的地址发布页（一次性迁移）
+        run {
+            var changed = false
+            val fixed = sites.map { s ->
+                if (s.addressPage.isBlank() && s.baseUrl.contains("sxsy", true)) {
+                    changed = true
+                    s.copy(addressPage = "https://sxsy.org/")
+                } else s
+            }
+            if (changed) {
+                sites.clear()
+                sites.addAll(fixed)
+                store.saveSites(sites)
+            }
+        }
         settings = store.settings()
         favorites.addAll(store.favorites())
         offline.addAll(store.offlineList())
@@ -75,7 +90,15 @@ class AppState(context: Context) {
         Site(name = "恩山无线论坛", baseUrl = "https://www.right.com.cn/forum", kind = SiteKind.DISCUZ,
             color = 0xFFFF7A45.toInt()),
         Site(name = "吾爱破解", baseUrl = "https://www.52pojie.cn", kind = SiteKind.DISCUZ,
-            color = 0xFFE03131.toInt())
+            color = 0xFFE03131.toInt()),
+        Site(
+            name = "尚香书苑",
+            baseUrl = "https://sxsy33.com",
+            kind = SiteKind.DISCUZ,
+            color = 0xFF9C36B5.toInt(),
+            // 域名经常更换，从地址发布页自动解析最新可用地址
+            addressPage = "https://sxsy.org/"
+        )
     )
 
     // ------------------------------------------------------------ 工具
@@ -100,6 +123,10 @@ class AppState(context: Context) {
 
     /** 站点首页抓取失败后短暂熔断，避免每次刷新都撞同一个错误页 */
     private val portalCoolDown = mutableMapOf<String, Long>()
+
+    /** 地址发布页解析节流 */
+    private val addressTried = mutableMapOf<String, Long>()
+    private var resolvingAddress = false
 
     private fun buildView(): String = when (feedTab) {
         1 -> "newreply"
@@ -184,6 +211,17 @@ class AppState(context: Context) {
             feedEnd = usable.isEmpty()
 
             if (merged.isNotEmpty()) store.saveFeedCache(merged)
+
+            // 全部失败时，尝试从「地址发布页」找最新域名（每站 30 分钟内只试一次）
+            if (merged.isEmpty()) {
+                val now = System.currentTimeMillis()
+                enabled.filter { it.addressPage.isNotBlank() }.forEach { s ->
+                    if (now - (addressTried[s.id] ?: 0L) > 30 * 60_000L) {
+                        addressTried[s.id] = now
+                        refreshAddress(s, silent = true)
+                    }
+                }
+            }
 
             if (merged.isEmpty()) {
                 feedError = if (cached.isNotEmpty()) {
@@ -290,6 +328,33 @@ class AppState(context: Context) {
         updateSite(site.copy(blockedFids = blocked))
         loadFeed(reset = true)
         notify(if (fid in blocked) "已屏蔽该版块" else "已恢复该版块")
+    }
+
+    /**
+     * 从站点配置的「地址发布页」解析最新可用域名并切换。
+     * silent=true 时不弹成功提示（用于后台自动纠错）。
+     */
+    fun refreshAddress(site: Site, silent: Boolean = false, onDone: ((String?) -> Unit)? = null) {
+        if (site.addressPage.isBlank()) {
+            if (!silent) notify("该站点还没有配置地址发布页")
+            onDone?.invoke(null)
+            return
+        }
+        if (resolvingAddress) { onDone?.invoke(null); return }
+        scope.launch {
+            resolvingAddress = true
+            val resolved = client.resolveAddress(site.addressPage)
+            resolvingAddress = false
+            if (resolved != null && resolved.trimEnd('/') != site.baseUrl.trimEnd('/')) {
+                updateSite(site.copy(baseUrl = resolved))
+                notify("已切换到最新地址：" + resolved.removePrefix("https://"))
+                boardCache.remove(site.id)
+                loadFeed(reset = true)
+            } else if (!silent) {
+                notify(if (resolved == null) "没能从地址发布页解析到可用地址" else "当前已是最新地址")
+            }
+            onDone?.invoke(resolved)
+        }
     }
 
     /** 进入首页/回前台时按需自动刷新（默认 3 分钟内不重复刷新） */

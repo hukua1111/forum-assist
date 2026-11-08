@@ -50,6 +50,61 @@ class ForumClient(private val http: Http) {
             parseThreads(html, site)
         }
 
+    // ------------------------------------------------- 地址发布页解析
+
+    /**
+     * 从「地址发布页」解析站点最新可用域名。
+     * 通用策略（不针对单一站点）：
+     *  1) 页面里的 <a href> 绝对链接
+     *  2) 纯文本中出现的域名
+     *  3) base64 混淆内容里解码出的链接
+     * 然后逐个探测，命中 Discuz 特征才采用（可过滤掉发布页自身/其它镜像页）。
+     */
+    suspend fun resolveAddress(pageUrl: String): String? = withContext(Dispatchers.IO) {
+        val html = http.get(pageUrl) ?: return@withContext null
+        val pageHost = runCatching { java.net.URL(pageUrl).host }.getOrNull().orEmpty().lowercase()
+        val roots = LinkedHashSet<String>()
+
+        fun addRoot(raw: String) {
+            val u = raw.trim().trimEnd('/')
+            if (!u.startsWith("http")) return
+            val host = runCatching { java.net.URL(u).host }.getOrNull()?.lowercase() ?: return
+            if (host.isBlank() || host == pageHost) return
+            if (!host.contains(".")) return
+            if (host.startsWith("www.")) {
+                // 保留 www 形态，但同域去重
+            }
+            roots.add("https://$host")
+        }
+
+        val doc = Jsoup.parse(html, pageUrl)
+        doc.select("a[href]").forEach { addRoot(it.absUrl("href")) }
+
+        val domainRe = Regex("(?:https?://)?((?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,10})")
+        domainRe.findAll(doc.text()).forEach { addRoot("https://" + it.groupValues[1]) }
+
+        Regex("[A-Za-z0-9+/]{40,}={0,2}").findAll(html).take(20).forEach { m ->
+            runCatching {
+                val decoded = String(android.util.Base64.decode(m.value, android.util.Base64.DEFAULT))
+                domainRe.findAll(decoded).forEach { d -> addRoot("https://" + d.groupValues[1]) }
+            }
+        }
+
+        for (root in roots.take(15)) {
+            val probe = http.get("$root/") ?: continue
+            if (looksLikeForum(probe)) return@withContext root
+        }
+        null
+    }
+
+    /** 粗略判断是不是论坛页面（Discuz 特征 / 站点标题 / 登录页） */
+    private fun looksLikeForum(html: String): Boolean {
+        if (html.length < 600) return false
+        val h = html.lowercase()
+        return h.contains("discuz") || h.contains("forum.php") || h.contains("viewthread") ||
+            html.contains("尚香") || (h.contains("powered by") && h.contains("php"))
+    }
+
     // ------------------------------------------------- 首页门户四格（最新主题/最新回复/热帖/精华）
 
     /**

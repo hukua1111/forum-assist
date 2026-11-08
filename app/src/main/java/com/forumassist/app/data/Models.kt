@@ -23,7 +23,9 @@ data class Site(
     val color: Int = DEFAULT_COLOR,
     val isDemo: Boolean = false,
     /** 被屏蔽的版块 fid（多为广告版块），不展示、不进信息流 */
-    val blockedFids: List<String> = emptyList()
+    val blockedFids: List<String> = emptyList(),
+    /** 地址发布页：域名换了可从这页自动发现最新地址 */
+    val addressPage: String = ""
 ) {
     val host: String
         get() = baseUrl.removePrefix("https://").removePrefix("http://").trimEnd('/')
@@ -46,6 +48,7 @@ fun Site.toJson(): JSONObject = JSONObject().apply {
     put("color", color)
     put("isDemo", isDemo)
     put("blockedFids", JSONArray(blockedFids))
+    put("addressPage", addressPage)
 }
 
 fun JSONObject.toSite(): Site = Site(
@@ -60,7 +63,8 @@ fun JSONObject.toSite(): Site = Site(
     isDemo = optBoolean("isDemo", false),
     blockedFids = optJSONArray("blockedFids")?.let { arr ->
         (0 until arr.length()).mapNotNull { arr.optString(it, "").ifBlank { null } }
-    }.orEmpty()
+    }.orEmpty(),
+    addressPage = optString("addressPage", "")
 )
 
 data class Board(
