@@ -46,6 +46,7 @@ class ForumClient(private val http: Http) {
         withContext(Dispatchers.IO) {
             val html = http.get(pageUrl(site, "forum.php?mod=guide&view=$view", page))
                 ?: return@withContext emptyList()
+            if (isServerErrorPage(html)) return@withContext emptyList()
             parseThreads(html, site)
         }
 
@@ -58,7 +59,18 @@ class ForumClient(private val http: Http) {
      */
     suspend fun portal(site: Site, view: String): List<ThreadSummary> = withContext(Dispatchers.IO) {
         val html = http.get(site.baseUrl.trimEnd('/') + "/") ?: return@withContext emptyList()
+        if (isServerErrorPage(html)) return@withContext emptyList()
         parsePortal(html, site, view)
+    }
+
+    /** 站点自身报错页（Discuz 数据库错误 / SQL 错误 / 空壳），当作抓取失败处理 */
+    private fun isServerErrorPage(html: String): Boolean {
+        if (html.length < 300) return true
+        return html.contains("Discuz! Database Error") ||
+            html.contains("SQL syntax") ||
+            html.contains("Database Error") ||
+            html.contains("数据库错误") ||
+            html.contains("Query Error")
     }
 
     fun parsePortal(html: String, site: Site, view: String): List<ThreadSummary> {

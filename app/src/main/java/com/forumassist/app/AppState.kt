@@ -98,6 +98,9 @@ class AppState(context: Context) {
         toast = msg
     }
 
+    /** 站点首页抓取失败后短暂熔断，避免每次刷新都撞同一个错误页 */
+    private val portalCoolDown = mutableMapOf<String, Long>()
+
     private fun buildView(): String = when (feedTab) {
         1 -> "newreply"
         2 -> "hot"
@@ -141,8 +144,14 @@ class AppState(context: Context) {
                             if (site.isDemo) {
                                 Demo.threads()
                             } else if (page <= 1) {
-                                // 优先读站点首页自带的门户四格（最新主题/最新回复/热帖/精华）
-                                client.portal(site, view).ifEmpty { client.guide(site, view, page) }
+                                // 优先读站点首页自带的门户四格；失败则熔断 10 分钟并回退 guide
+                                val now = System.currentTimeMillis()
+                                val portal = if (now >= (portalCoolDown[site.id] ?: 0L)) {
+                                    client.portal(site, view).also {
+                                        if (it.isEmpty()) portalCoolDown[site.id] = now + 10 * 60_000L
+                                    }
+                                } else emptyList()
+                                portal.ifEmpty { client.guide(site, view, page) }
                             } else {
                                 client.guide(site, view, page)
                             }
@@ -162,16 +171,24 @@ class AppState(context: Context) {
                 .distinctBy { it.key }
                 .sortedByDescending { it.ts }
 
-            val usable = if (merged.isEmpty() && settings.demoFallback) {
-                Demo.threads()
-            } else merged
+            val cached = if (merged.isEmpty()) store.feedCache() else emptyList()
+            val usable = when {
+                merged.isNotEmpty() -> merged
+                cached.isNotEmpty() -> cached
+                settings.demoFallback -> Demo.threads()
+                else -> emptyList()
+            }
 
             if (reset) feed.clear()
             feed.addAll(usable.filter { t -> feed.none { it.key == t.key } })
             feedEnd = usable.isEmpty()
 
+            if (merged.isNotEmpty()) store.saveFeedCache(merged)
+
             if (merged.isEmpty()) {
-                feedError = if (usable.isNotEmpty()) {
+                feedError = if (cached.isNotEmpty()) {
+                    "站点暂时不可用（服务器报错或限流），先显示上次缓存的内容"
+                } else if (usable.isNotEmpty()) {
                     "真实站点暂时没有抓到内容，当前展示的是内置演示数据"
                 } else {
                     "没有拿到内容。可能是站点需要登录、开启了防采集，或网络不通。\n试试在「论坛」页用网页模式打开。"

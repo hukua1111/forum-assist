@@ -69,6 +69,9 @@ class Store(context: Context) {
         sp.edit().putString(key, list.toJsonArray().toString()).apply()
     }
 
+    fun feedCache(): List<ThreadSummary> = readThreads("feed_cache")
+    fun saveFeedCache(list: List<ThreadSummary>) = writeThreads("feed_cache", list.take(200))
+
     fun readMarks(): MutableMap<String, Int> {
         val raw = sp.getString("read_marks", null) ?: return mutableMapOf()
         return runCatching {
