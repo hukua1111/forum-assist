@@ -90,7 +90,7 @@ fun ThreadDetailScreen(
 
     LaunchedEffect(thread.key) {
         loading = true
-        detail = state.detail(site, thread.tid)
+        detail = state.detail(site, thread.tid, 1, thread.url)
         loadedPage = 1
         loading = false
         if (detail == null) {

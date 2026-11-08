@@ -80,7 +80,9 @@ data class ThreadSummary(
     val isTop: Boolean = false,
     val isDigest: Boolean = false,
     val isNew: Boolean = false,
-    val ts: Long = 0L
+    val ts: Long = 0L,
+    /** 列表页里抓到的原始帖子链接（可能带 _dsign 等防采集签名，优先用它请求详情） */
+    val url: String = ""
 ) {
     val key: String get() = "$siteId/$tid"
 }
@@ -100,6 +102,7 @@ fun ThreadSummary.toJson(): JSONObject = JSONObject().apply {
     put("isDigest", isDigest)
     put("isNew", isNew)
     put("ts", ts)
+    put("url", url)
 }
 
 fun JSONObject.toThread(): ThreadSummary = ThreadSummary(
@@ -116,7 +119,8 @@ fun JSONObject.toThread(): ThreadSummary = ThreadSummary(
     isTop = optBoolean("isTop"),
     isDigest = optBoolean("isDigest"),
     isNew = optBoolean("isNew"),
-    ts = optLong("ts")
+    ts = optLong("ts"),
+    url = optString("url")
 )
 
 sealed class Block {

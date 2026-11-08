@@ -261,10 +261,10 @@ class AppState(context: Context) {
         client.threads(site, fid, page, orderBy)
     }
 
-    suspend fun detail(site: Site, tid: String, page: Int = 1): ThreadDetail? =
+    suspend fun detail(site: Site, tid: String, page: Int = 1, rawUrl: String? = null): ThreadDetail? =
         withContext(Dispatchers.IO) {
             if (site.isDemo) return@withContext Demo.detail(tid)
-            client.detail(site, tid, page) ?: store.loadOffline(site.id, tid)
+            client.detail(site, tid, page, rawUrl) ?: store.loadOffline(site.id, tid)
         }
 
     suspend fun search(query: String): List<ThreadSummary> = withContext(Dispatchers.IO) {

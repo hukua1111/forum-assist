@@ -94,7 +94,7 @@ class ForumClient(private val http: Http) {
             val author = box.selectFirst("cite a, .by cite a, .author a, .favatar a, a.xw1")?.text()?.trim()
                 ?: ""
             val lastTimeRaw = Regex(
-                "\\d{4}-\\d{1,2}-\\d{1,2}(\\s+\\d{1,2}:\\d{1,2})?|\\d{1,2}-\\d{1,2}\\s+\\d{1,2}:\\d{1,2}|\\d+\\s*(?:秒|分钟|小时|天)前|昨天"
+                "\\d{4}-\\d{1,2}-\\d{1,2}([\\s\\u00A0]+\\d{1,2}:\\d{1,2})?|\\d{1,2}-\\d{1,2}[\\s\\u00A0]+\\d{1,2}:\\d{1,2}|\\d+[\\s\\u00A0]*(?:秒|分钟|小时|天)前|昨天"
             ).find(text)?.value ?: ""
             val ts = TimeUtil.parse(lastTimeRaw)
             val fid = Regex("fid=(\\d+)").find(href)?.groupValues?.get(1) ?: ""
@@ -117,7 +117,8 @@ class ForumClient(private val http: Http) {
                 isTop = isTop,
                 isDigest = isDigest,
                 isNew = isNew,
-                ts = ts
+                ts = ts,
+                url = runCatching { a.absUrl("href") }.getOrDefault("").ifBlank { href }
             )
         }
         return map.values.toList()
@@ -125,15 +126,19 @@ class ForumClient(private val http: Http) {
 
     // ---------------------------------------------------------------- 详情
 
-    suspend fun detail(site: Site, tid: String, page: Int = 1): ThreadDetail? =
+    suspend fun detail(site: Site, tid: String, page: Int = 1, rawUrl: String? = null): ThreadDetail? =
         withContext(Dispatchers.IO) {
-            // 依次尝试：手机版模板 → 桌面版模板 → Archiver 纯文本页。
-            // 部分站点（如尚香书苑）手机模板结构特殊或正文由脚本渲染，桌面版/归档版兜底。
-            val candidates = listOf(
-                pageUrl(site, "forum.php?mod=viewthread&tid=$tid", page),
-                u(site, "forum.php?mod=viewthread&tid=$tid" + if (page > 1) "&page=$page" else ""),
-                u(site, "archiver/tid-$tid.html" + if (page > 1) "?page=$page" else "")
-            ).distinct()
+            // 依次尝试：列表里的原始链接（可能带 _dsign 防采集签名）→ 手机版 → 桌面版 → Archiver。
+            // 部分站点（如尚香书苑）手机模板无 post_ 容器，且链接带签名，自己拼 URL 会拿不到正文。
+            val candidates = buildList {
+                val raw = rawUrl?.trim().orEmpty()
+                if (raw.isNotEmpty() && page <= 1) {
+                    add(if (raw.startsWith("http")) raw else u(site, raw))
+                }
+                add(pageUrl(site, "forum.php?mod=viewthread&tid=$tid", page))
+                add(u(site, "forum.php?mod=viewthread&tid=$tid" + if (page > 1) "&page=$page" else ""))
+                add(u(site, "archiver/tid-$tid.html" + if (page > 1) "?page=$page" else ""))
+            }.distinct()
 
             for (url in candidates) {
                 val html = http.get(url) ?: continue
@@ -144,11 +149,20 @@ class ForumClient(private val http: Http) {
             null
         }
 
-    /** 返回的是登录页（站点强制登录）时，换下一种模板再试 */
+    /**
+     * 是否是「请先登录」页。
+     * 基准：页面里有没有可解析的正文节点；只有完全没有正文、且明显是登录页时才判定为登录墙。
+     * （早期版本用 post_/t_f 特征判断，误把使用 div.message 模板的站点当成登录页）
+     */
     private fun isLoginWall(html: String): Boolean {
-        if (html.contains("postmessage") || html.contains("id=\"post_")) return false
-        if (html.contains("id='post_") || html.contains("class=\"t_f\"")) return false
-        return html.contains("member.php?mod=logging") || html.contains("name=\"formhash\"")
+        if (html.contains("class=\"message\"") || html.contains("postmessage") ||
+            html.contains("class=\"t_f\"") || html.contains("id=\"post_")
+        ) return false
+        val doc = Jsoup.parse(html)
+        if (doc.select(BODY_SELECTOR).any { it.text().isNotBlank() }) return false
+        val title = doc.title()
+        return title.contains("登录") || title.contains("提示") ||
+            html.contains("member.php?mod=logging")
     }
 
     private fun parseDetail(html: String, site: Site, tid: String, page: Int): ThreadDetail? {
@@ -196,7 +210,7 @@ class ForumClient(private val http: Http) {
         val seen = mutableSetOf<String>()
         for (body in bodies) {
             val holder = body.closest("div[id^=post_]")
-                ?: body.closest("div.plc, li.post, .post, .thread-post, .postlist > div")
+                ?: body.closest("div.plc, div[id^=pid], li.post, .post, .thread-post, .postlist > div")
                 ?: body.parent()?.parent()
                 ?: continue
             val key = holder.text().take(40)
@@ -215,7 +229,7 @@ class ForumClient(private val http: Http) {
 
     private fun buildPost(holder: Element, body: Element, index: Int, extracted: Boolean): Post {
         val pid = holder.id().removePrefix("post_")
-        val author = holder.selectFirst("a.xw1, .authi a, .favatar a, .pi a, .username, .author a, .postinfo a")
+        val author = holder.selectFirst("a.xw1, .authi .z a, .mtit a, .authi a, .favatar a, .pi a, .username, .author a, .postinfo a")
             ?.text()?.trim().orEmpty()
         val avatar = holder.selectFirst("img.avatar, .favatar img, .avatar img")?.attr("src").orEmpty()
             .let { if (it.startsWith("//")) "https:$it" else it }
@@ -223,13 +237,13 @@ class ForumClient(private val http: Http) {
             holder.selectFirst("a[href*=space-uid]")?.attr("href") ?: ""
         )?.groupValues?.get(1).orEmpty()
 
-        val infoText = holder.selectFirst(".pi, .authi, .favatar, .postinfo, .post-date, .time")
+        val infoText = holder.selectFirst(".mtime, .pi, .authi, .favatar, .postinfo, .post-date, .time")
             ?.text().orEmpty()
         val timeRaw = Regex(
-            "\\d{4}-\\d{1,2}-\\d{1,2}(\\s+\\d{1,2}:\\d{1,2})?|\\d{1,2}-\\d{1,2}\\s+\\d{1,2}:\\d{1,2}|\\d+\\s*(?:分钟|小时|天)前|昨天"
+            "\\d{4}-\\d{1,2}-\\d{1,2}([\\s\\u00A0]+\\d{1,2}:\\d{1,2})?|\\d{1,2}-\\d{1,2}[\\s\\u00A0]+\\d{1,2}:\\d{1,2}|\\d+[\\s\\u00A0]*(?:秒|分钟|小时|天)前|昨天"
         ).find(infoText)?.value.orEmpty()
 
-        val floorText = holder.selectFirst("strong a em, .pi strong, #authorposton$pid")?.text().orEmpty()
+        val floorText = holder.selectFirst(".mtit .y, strong a em, .pi strong, #authorposton$pid")?.text().orEmpty()
         val floor = when {
             floorText.contains("楼主") -> 1
             floorText.contains("沙发") -> 2
