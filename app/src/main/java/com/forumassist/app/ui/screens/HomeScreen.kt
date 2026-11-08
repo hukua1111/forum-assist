@@ -65,6 +65,9 @@ fun HomeScreen(
         if (state.feed.isEmpty() && !state.feedLoading) state.loadFeed(reset = true)
     }
 
+    // 回到首页时按需刷新（3 分钟内不重复）
+    LaunchedEffect(Unit) { state.maybeAutoRefresh() }
+
     val shouldLoadMore by remember {
         derivedStateOf {
             val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
@@ -201,7 +204,7 @@ private fun HomeHeader(state: AppState, onSearch: () -> Unit, onOpenSites: () ->
 
 @Composable
 private fun FeedTabs(state: AppState) {
-    val tabs = listOf("最新发表", "最新回复", "热门")
+    val tabs = listOf("最新主题", "最新回复", "热帖", "精华")
     Row(
         modifier = Modifier
             .fillMaxWidth()
