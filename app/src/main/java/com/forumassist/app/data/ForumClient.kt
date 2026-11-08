@@ -60,39 +60,122 @@ class ForumClient(private val http: Http) {
      *  3) base64 混淆内容里解码出的链接
      * 然后逐个探测，命中 Discuz 特征才采用（可过滤掉发布页自身/其它镜像页）。
      */
-    suspend fun resolveAddress(pageUrl: String): String? = withContext(Dispatchers.IO) {
-        val html = http.get(pageUrl) ?: return@withContext null
-        val pageHost = runCatching { java.net.URL(pageUrl).host }.getOrNull().orEmpty().lowercase()
-        val roots = LinkedHashSet<String>()
+    /** 发布页里常见的第三方域名，避免把社群/统计链接误当成站点地址 */
+    private val NOISE_HOSTS = listOf(
+        "t.me", "telegram.me", "telegram.org", "telegram.dog",
+        "w3.org", "google.com", "googleapis.com", "gstatic.com", "google-analytics.com",
+        "cloudflare.com", "cloudflareinsights.com", "jsdelivr.net", "unpkg.com", "bootcdn.net",
+        "github.com", "githubusercontent.com", "mozilla.org", "adobe.com",
+        "baidu.com", "cnzz.com", "umeng.com", "weixin.qq.com", "qq.com",
+        "facebook.com", "twitter.com", "x.com", "youtube.com", "youtu.be", "instagram.com",
+        "microsoft.com", "apple.com"
+    )
 
-        fun addRoot(raw: String) {
-            val u = raw.trim().trimEnd('/')
-            if (!u.startsWith("http")) return
-            val host = runCatching { java.net.URL(u).host }.getOrNull()?.lowercase() ?: return
-            if (host.isBlank() || host == pageHost) return
-            if (!host.contains(".")) return
-            if (host.startsWith("www.")) {
-                // 保留 www 形态，但同域去重
+    private fun isNoiseHost(host: String): Boolean {
+        val h = host.lowercase().removePrefix("www.")
+        return NOISE_HOSTS.any { h == it || h.endsWith(".$it") }
+    }
+
+    /**
+     * 从「地址发布页」解析站点最新可用域名。通用策略（不针对单一站点）：
+     *  1) 发布页的 JS 配置项（latestDomain / websiteUrl / siteUrl 等）——多数发布页的数据源
+     *  2) 页面链接（「进入 / 访问」按钮优先）与明文域名（含 <script> 里的文本）
+     *  3) base64 混淆内容里解码出的域名
+     * 候选按优先级逐个探测，命中论坛特征才采用，避免把发布页自身/镜像页/邮箱域名当站点。
+     */
+    suspend fun resolveAddress(pageUrl: String): String? = withContext(Dispatchers.IO) {
+        val html = run {
+            var h = http.get(pageUrl)
+            if (h == null && pageUrl.startsWith("https://", true)) {
+                // 有些发布页只开了 http
+                h = http.get("http://" + pageUrl.removePrefix("https://"))
             }
-            roots.add("https://$host")
+            h
+        } ?: return@withContext null
+        val pageHost = runCatching { java.net.URL(pageUrl).host }.getOrNull().orEmpty().lowercase()
+
+        val high = LinkedHashSet<String>()
+        val mid = LinkedHashSet<String>()
+        val low = LinkedHashSet<String>()
+        val hits = HashMap<String, Int>()
+
+        fun normalize(raw: String): String? {
+            var u = raw.trim().trim('"', '\'', ' ', ',', ';', '，', '。')
+            if (u.isEmpty() || u.contains(" ") || u.contains("@")) return null
+            if (!u.startsWith("http", true) &&
+                (u.startsWith("mailto:", true) || u.startsWith("javascript:", true) || u.startsWith("tel:", true))
+            ) return null
+            if (!u.startsWith("http", true)) {
+                if (!u.contains(".")) return null
+                u = "https://$u"
+            }
+            val host = runCatching { java.net.URL(u).host }.getOrNull()?.lowercase()?.trim() ?: return null
+            if (host.isBlank() || !host.contains(".")) return null
+            if (host == pageHost || isNoiseHost(host)) return null
+            return "https://$host"
         }
 
+        fun add(raw: String, bucket: MutableSet<String>) {
+            val root = normalize(raw) ?: return
+            bucket.add(root)
+            hits[root] = (hits[root] ?: 0) + 1
+        }
+
+        // 1) JS 配置里的“最新地址”字段（本次这份发布页就是 CONFIG.latestDomain / websiteUrl）
+        Regex(
+            "[\"']?(latest_?domain|latest_?url|latest_?addr(?:ess)?|website_?url|site_?url|official_?url|home_?page)" +
+                "[\"']?\\s*[:=]\\s*[\"']([^\"'\\s]{4,120})[\"']",
+            RegexOption.IGNORE_CASE
+        ).findAll(html).take(40).forEach { add(it.groupValues[2], high) }
+
+        // 通用字段名（url / domain）可信度低，只作为普通候选
+        Regex("[\"']?(?:url|domain|host)[\"']?\\s*[:=]\\s*[\"']([^\"'\\s]{4,120})[\"']", RegexOption.IGNORE_CASE)
+            .findAll(html).take(40).forEach { add(it.groupValues[1], mid) }
+
+        // 2) 链接：文案为「进入 / 访问 / enter」的优先
         val doc = Jsoup.parse(html, pageUrl)
-        doc.select("a[href]").forEach { addRoot(it.absUrl("href")) }
+        doc.select("a[href]").forEach { a ->
+            val rawHref = a.attr("href").trim()
+            if (rawHref.startsWith("mailto:", true) ||
+                rawHref.startsWith("javascript:", true) ||
+                rawHref.startsWith("tel:", true) || rawHref.startsWith("#")
+            ) return@forEach
+            val hint = (a.text() + " " + a.attr("id") + " " + a.attr("class")).lowercase()
+            val preferred = hint.contains("进入") || hint.contains("访问") ||
+                hint.contains("enter") || hint.contains("domain") || hint.contains("button")
+            add(a.absUrl("href"), if (preferred) high else mid)
+        }
 
-        val domainRe = Regex("(?:https?://)?((?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,10})")
-        domainRe.findAll(doc.text()).forEach { addRoot("https://" + it.groupValues[1]) }
+        // 3) 全文域名（含 <script> 内配置文本）
+        Regex("https?://((?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,10})")
+            .findAll(html).take(300).forEach { add("https://" + it.groupValues[1], mid) }
 
+        // 4) 纯文本域名（邮箱域名用 lookbehind 排除）
+        Regex("(?<![@\\w.-])((?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,6})(?![\\w.-])")
+            .findAll(doc.text()).take(200).forEach { add("https://" + it.groupValues[1], mid) }
+
+        // 5) base64 混淆
         Regex("[A-Za-z0-9+/]{40,}={0,2}").findAll(html).take(20).forEach { m ->
             runCatching {
                 val decoded = String(android.util.Base64.decode(m.value, android.util.Base64.DEFAULT))
-                domainRe.findAll(decoded).forEach { d -> addRoot("https://" + d.groupValues[1]) }
+                Regex("(?:https?://)?((?:[a-zA-Z0-9-]+\\.)+[a-zA-Z]{2,10})")
+                    .findAll(decoded).take(5).forEach { d -> add(d.groupValues[1], low) }
             }
         }
 
-        for (root in roots.take(15)) {
+        // 出现次数多的更可能是站点主域名
+        val ordered = high.toList() +
+            mid.sortedByDescending { hits[it] ?: 0 } +
+            low.sortedByDescending { hits[it] ?: 0 }
+
+        for (root in ordered.distinct().take(14)) {
             val probe = http.get("$root/") ?: continue
             if (looksLikeForum(probe)) return@withContext root
+            if (root.startsWith("https://")) {
+                val plain = "http://" + root.removePrefix("https://")
+                val alt = http.get("$plain/")
+                if (alt != null && looksLikeForum(alt)) return@withContext plain
+            }
         }
         null
     }
@@ -102,6 +185,7 @@ class ForumClient(private val http: Http) {
         if (html.length < 600) return false
         val h = html.lowercase()
         return h.contains("discuz") || h.contains("forum.php") || h.contains("viewthread") ||
+            h.contains("member.php?mod=logging") || h.contains("formhash") ||
             html.contains("尚香") || (h.contains("powered by") && h.contains("php"))
     }
 
