@@ -17,10 +17,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -31,6 +33,7 @@ import androidx.compose.material.icons.outlined.BookmarkAdded
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Language
+import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.rounded.Send
@@ -66,6 +69,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.forumassist.app.AppState
@@ -74,6 +79,7 @@ import com.forumassist.app.data.Block
 import com.forumassist.app.data.Post
 import com.forumassist.app.data.Site
 import com.forumassist.app.data.SiteProfile
+import com.forumassist.app.data.TextFile
 import com.forumassist.app.data.ThreadDetail
 import com.forumassist.app.data.ThreadSummary
 import com.forumassist.app.data.profile
@@ -109,6 +115,11 @@ fun ThreadDetailScreen(
     // 附件下载：先弹确认框，避免点一下就默默开始下大文件
     var pendingFile by remember { mutableStateOf<Block.File?>(null) }
     var downloading by remember { mutableStateOf(false) }
+    // txt 附件在线阅读：站点上很多「正文」其实全在附件里
+    var reader by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var reading by remember { mutableStateOf(false) }
+    // 抓取失败后手动重试：站点风控常常是瞬时的，隔几秒再要一次就能成功
+    var reloadToken by remember { mutableStateOf(0) }
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val url = "${site.baseUrl}/forum.php?mod=viewthread&tid=${thread.tid}"
@@ -121,7 +132,27 @@ fun ThreadDetailScreen(
 
     val scope = rememberCoroutineScope()
 
-    LaunchedEffect(thread.key) {
+    // 在线阅读：带 Cookie 把附件直接拉进内存，不落盘
+    val openReader: (Block.File) -> Unit = { f ->
+        if (!reading) {
+            reading = true
+            scope.launch {
+                val res = withContext(Dispatchers.IO) {
+                    AttachmentSaver.readText(state.client.httpClient, f.url, referer)
+                }
+                reading = false
+                val text = res.text
+                if (text != null) {
+                    pendingFile = null
+                    reader = TextFile.displayName(f.name) to text
+                } else {
+                    Toast.makeText(context, res.message, Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(thread.key, reloadToken) {
         loading = detail == null
         error = null
         loadedPage = 1
@@ -353,8 +384,10 @@ fun ThreadDetailScreen(
             detail == null -> EmptyState(
                 title = "正文没能加载出来",
                 desc = error ?: "该站点可能限制外部访问，建议用网页模式阅读。",
-                actionLabel = "网页模式打开",
-                onAction = onOpenWeb
+                actionLabel = "重试",
+                onAction = { reloadToken += 1 },
+                secondaryLabel = "网页模式打开",
+                onSecondary = onOpenWeb
             )
 
             else -> LazyColumn(
@@ -365,6 +398,26 @@ fun ThreadDetailScreen(
                 val d = detail!!
                 item(key = "head") {
                     DetailHead(d, thread, site, offline, showAttCount = profile.richAttachment)
+                }
+
+                // 正文只有一两句、内容全在 txt 附件里（小说站常见）：直接给阅读入口，
+                // 不用让人先下载再找文件管理器打开。
+                val flatFiles = d.posts.flatMap { p -> p.blocks.filterIsInstance<Block.File>() }
+                // 优先挑免费的 txt：付费的点了只会弹「先购买」，没意义
+                val txtFile = flatFiles.firstOrNull { TextFile.isText(it.name, it.url) && !it.needsPay }
+                    ?: flatFiles.firstOrNull { TextFile.isText(it.name, it.url) }
+                val bodyChars = d.posts.sumOf { p ->
+                    p.blocks.filterIsInstance<Block.Text>().sumOf { it.text.length }
+                }
+                if (txtFile != null && bodyChars < 200) {
+                    val file = txtFile
+                    item(key = "txt-hint") {
+                        TxtAttachmentHint(
+                            file = file,
+                            loading = reading,
+                            onRead = { openReader(file) }
+                        )
+                    }
                 }
 
                 if (splitReady) {
@@ -480,20 +533,155 @@ fun ThreadDetailScreen(
                 }
             },
             dismissButton = {
-                TextButton(onClick = {
-                    if (downloading) return@TextButton
-                    if (pay) doDownload() else {
-                        pendingFile = null
-                        onOpenUrl(f.url)
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    // 小说站的正文经常整个放在 txt 附件里，先给一个「不用落盘直接看」的入口
+                    if (TextFile.isText(f.name, f.url)) {
+                        TextButton(
+                            enabled = !downloading && !reading,
+                            onClick = { openReader(f) }
+                        ) { Text(if (reading) "载入中…" else "在线阅读") }
                     }
-                }) { Text(if (pay) "直接下载" else "网页打开") }
+                    TextButton(onClick = {
+                        if (downloading) return@TextButton
+                        if (pay) doDownload() else {
+                            pendingFile = null
+                            onOpenUrl(f.url)
+                        }
+                    }) { Text(if (pay) "直接下载" else "网页打开") }
+                }
             }
+        )
+    }
+
+    reader?.let { (title, content) ->
+        TextReaderDialog(
+            title = title,
+            content = content,
+            onCopy = {
+                clipboard.setText(AnnotatedString(content))
+                state.notify("全文已复制")
+            },
+            onClose = { reader = null }
         )
     }
 }
 
 /** 附件下载回调：BlockContent 埋在很深的列表里，用 CompositionLocal 传比层层加参数省事 */
 private val LocalAttachmentDownload = staticCompositionLocalOf<(Block.File) -> Unit> { {} }
+
+/** 「正文很短 + 有 txt 附件」时的提示卡：一键在线阅读，不用先存到文件夹再去找 */
+@Composable
+private fun TxtAttachmentHint(file: Block.File, loading: Boolean, onRead: () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Outlined.MenuBook, null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "本帖正文在附件里",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = TextFile.displayName(file.name) + if (file.needsPay) "（需先购买）" else "",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            TextButton(enabled = !loading, onClick = onRead) {
+                Text(if (loading) "载入中…" else "在线阅读")
+            }
+        }
+    }
+}
+
+/**
+ * txt 附件全屏阅读器。
+ * 按 1600 字切块后交给 LazyColumn：十万字的整本也不会在测量阶段卡主线程。
+ */
+@Composable
+private fun TextReaderDialog(
+    title: String,
+    content: String,
+    onCopy: () -> Unit,
+    onClose: () -> Unit
+) {
+    val chunks = remember(content) { TextFile.chunk(content) }
+    val listState = rememberLazyListState()
+    Dialog(
+        onDismissRequest = onClose,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .statusBarsPadding()
+                            .padding(start = 16.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = title,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "${content.length} 字 · 共 ${chunks.size} 段",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        IconButton(onClick = onCopy) {
+                            Icon(Icons.Outlined.ContentCopy, "复制全文", Modifier.size(18.dp))
+                        }
+                        TextButton(onClick = onClose) { Text("关闭") }
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 14.dp, bottom = 48.dp)
+                ) {
+                    itemsIndexed(chunks, key = { i, _ -> i }) { _, chunk ->
+                        Text(
+                            text = chunk,
+                            style = MaterialTheme.typography.bodyLarge,
+                            lineHeight = 28.sp,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
 
 /** 付费附件：meta 里带售价/购买标记（解析时补的「需购买」也算） */
 private val Block.File.needsPay: Boolean

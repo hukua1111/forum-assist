@@ -724,7 +724,7 @@ class ForumClient(private val http: Http) {
             val author = box.selectFirst("cite a, .by cite a, .author a, .favatar a, a.xw1")?.text()?.trim()
                 ?: ""
             val lastTimeRaw = Regex(
-                "\\d{4}-\\d{1,2}-\\d{1,2}([\\s\\u00A0]+\\d{1,2}:\\d{1,2})?|\\d{1,2}-\\d{1,2}[\\s\\u00A0]+\\d{1,2}:\\d{1,2}|\\d+[\\s\\u00A0]*(?:秒|分钟|小时|天)前|昨天"
+                "\\d{4}-\\d{1,2}-\\d{1,2}([\\s\\u00A0]+\\d{1,2}:\\d{1,2})?|\\d{1,2}-\\d{1,2}[\\s\\u00A0]+\\d{1,2}:\\d{1,2}|\\d+[\\s\\u00A0]*(?:秒|分钟|小时|天)前|昨天[\\s\\u00A0]*\\d{1,2}:\\d{1,2}|昨天"
             ).find(text)?.value ?: ""
             val ts = TimeUtil.parse(lastTimeRaw)
             val fid = Regex("fid=(\\d+)").find(href)?.groupValues?.get(1) ?: ""
@@ -788,6 +788,12 @@ class ForumClient(private val http: Http) {
                     add(if (raw.startsWith("http")) raw else u(site, raw))
                 }
                 add(pageUrl(site, "forum.php?mod=viewthread&tid=$tid", page))
+                // 实证：同一 tid 的裸链接只回 2~3 KB 提示页时，带 page 参数能拿到整页
+                // （日志里 441345 的 &page=2 是 79 KB，同一时刻的裸链接是 2.7 KB）
+                add(u(site, "forum.php?mod=viewthread&tid=$tid&page=" + page.coerceAtLeast(1)))
+                // 伪静态地址：页面 <link rel="canonical"> 用的就是它，部分防采集规则只对
+                // forum.php?mod=viewthread 形态下手，伪静态反而能拿到整页
+                add(u(site, "thread-$tid-" + page.coerceAtLeast(1) + "-1.html"))
                 add(u(site, "forum.php?mod=viewthread&tid=$tid" + if (page > 1) "&page=$page" else ""))
                 // 显式要电脑版：手机模板有时只回一个空壳（正文靠前端 JS 拉），电脑版永远带 t_f
                 add(
@@ -906,10 +912,13 @@ class ForumClient(private val http: Http) {
     private fun notesSnapshot(notes: MutableList<String>): String =
         synchronized(notes) { notes.toList() }.joinToString("\n")
 
-    /** 重试用入口：加 _t 打散缓存键，避免再次命中同一个缓存下来的错误页 */    private fun retryCandidates(site: Site, tid: String, page: Int): List<String> {
+    /** 重试用入口：加 _t 打散缓存键，避免再次命中同一个缓存下来的错误页 */
+    private fun retryCandidates(site: Site, tid: String, page: Int): List<String> {
         val t = System.currentTimeMillis()
         val pageQuery = if (page > 1) "&page=$page" else ""
         return listOf(
+            // 日志实证：裸链接回 2~3 KB 提示页时，带 page 参数的同一 tid 能拿到整页
+            u(site, "forum.php?mod=viewthread&tid=$tid" + (pageQuery.ifBlank { "&page=1" }) + "&_t=$t"),
             u(site, "forum.php?mod=viewthread&tid=$tid$pageQuery&mobile=no&_t=$t"),
             u(site, "archiver/tid-$tid.html" + (if (page > 1) "?page=$page&_t=$t" else "?_t=$t"))
         )
@@ -946,7 +955,10 @@ class ForumClient(private val http: Http) {
         val msg = doc?.selectFirst("#messagetext, .alert_info, .alert_error, .alert_error_msg, div.message")
             ?.text()?.replace(Regex("\\s+"), " ")?.trim()?.take(70).orEmpty()
         val title = doc?.title()?.trim()?.take(20).orEmpty()
-        return if (msg.isNotBlank()) "提示页「$title」$msg" else "无正文 ${html.length}B 标题「$title」"
+        if (msg.isNotBlank()) return "提示页「$title」$msg"
+        // 连提示语都没有时，把正文前几十个字一起记下来：下次能直接看出这 2~3 KB 到底是个什么页
+        val snippet = doc?.body()?.text()?.replace(Regex("\\s+"), " ")?.trim()?.take(60).orEmpty()
+        return "无正文 ${html.length}B 标题「$title」" + if (snippet.isBlank()) "" else " 内容「$snippet」"
     }
 
     /**
@@ -1050,7 +1062,7 @@ class ForumClient(private val http: Http) {
                     ?.text().orEmpty()
             }
         val timeRaw = Regex(
-            "\\d{4}-\\d{1,2}-\\d{1,2}([\\s\\u00A0]+\\d{1,2}:\\d{1,2})?|\\d{1,2}-\\d{1,2}[\\s\\u00A0]+\\d{1,2}:\\d{1,2}|\\d+[\\s\\u00A0]*(?:秒|分钟|小时|天)前|昨天"
+            "\\d{4}-\\d{1,2}-\\d{1,2}([\\s\\u00A0]+\\d{1,2}:\\d{1,2})?|\\d{1,2}-\\d{1,2}[\\s\\u00A0]+\\d{1,2}:\\d{1,2}|\\d+[\\s\\u00A0]*(?:秒|分钟|小时|天)前|昨天[\\s\\u00A0]*\\d{1,2}:\\d{1,2}|昨天"
         ).find(infoText)?.value.orEmpty()
 
         val floorText = holder.selectFirst(".mtit .y, strong a em, .pi strong, #authorposton$pid")?.text().orEmpty()

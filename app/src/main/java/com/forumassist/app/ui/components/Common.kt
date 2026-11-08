@@ -25,6 +25,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -229,6 +230,8 @@ fun EmptyState(
     icon: ImageVector = Icons.Outlined.Inbox,
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
+    secondaryLabel: String? = null,
+    onSecondary: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -273,6 +276,9 @@ fun EmptyState(
             Button(onClick = onAction, shape = RoundedCornerShape(12.dp)) {
                 Text(actionLabel)
             }
+        }
+        if (secondaryLabel != null && onSecondary != null) {
+            TextButton(onClick = onSecondary) { Text(secondaryLabel) }
         }
     }
 }
