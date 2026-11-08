@@ -660,19 +660,22 @@ private fun BlockContent(
             )
         }
 
-        is Block.File -> Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
-                .clickable {
-                    // 默认走「下载」：带 Cookie 直接抓文件；需要购买的会明确提示，
-                    // 用户可以在弹窗里改用网页模式去买。
-                    LocalAttachmentDownload.current(block)
-                }
-                .padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        is Block.File -> {
+            // CompositionLocal 必须在 @Composable 上下文里读，不能塞进 clickable 的 lambda
+            val download = LocalAttachmentDownload.current
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+                    .clickable {
+                        // 默认走「下载」：带 Cookie 直接抓文件；需要购买的会明确提示，
+                        // 用户可以在弹窗里改用网页模式去买。
+                        download(block)
+                    }
+                    .padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
             Icon(
                 Icons.Outlined.Download, "附件",
                 tint = MaterialTheme.colorScheme.primary,
@@ -694,6 +697,7 @@ private fun BlockContent(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+            }
             }
         }
 
