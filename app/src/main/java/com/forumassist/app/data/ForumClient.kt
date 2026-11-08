@@ -42,7 +42,7 @@ class ForumClient(private val http: Http) {
             lastListIssue = "站点返回错误页（服务器过载或数据库异常）"
             return@withContext emptyList()
         }
-        if (isLoginWall(html)) {
+        if (isLoginLanding(html)) {
             lastListIssue = "登录态已失效（站点跳到了登录页）。去「论坛」页用网页模式重新登录一次即可"
             return@withContext emptyList()
         }
@@ -84,7 +84,7 @@ class ForumClient(private val http: Http) {
      * 返回的是登录页——里面的「永久地址」「每日签到」都是快捷导航里的帖子链接，
      * 以前会被当成帖子解析出来，于是首页只显示一条「永久地址」。
      */
-    private fun isLoginWall(html: String): Boolean {
+    private fun isLoginLanding(html: String): Boolean {
         if (html.contains("mod=logging&action=login") && html.contains("没有账号")) return true
         if (html.contains("id=\"loginform\"") || html.contains("name=\"loginsubmit\"")) return true
         return false
@@ -103,7 +103,7 @@ class ForumClient(private val http: Http) {
                 lastListIssue = "站点返回错误页（可能是服务器过载或数据库异常）"
                 return@withContext emptyList()
             }
-            if (isLoginWall(html)) {
+            if (isLoginLanding(html)) {
                 lastListIssue = "登录态已失效（站点跳到了登录页）。去「论坛」页用网页模式重新登录一次即可"
                 return@withContext emptyList()
             }
@@ -296,7 +296,7 @@ class ForumClient(private val http: Http) {
         // 1) 优先「电脑版」：首页四格带 tip 属性，作者/查看/回复齐全
         val pcHtml = http.get("$base/forum.php?mobile=no", desktop = true)
         if (pcHtml != null && !isServerErrorPage(pcHtml)) {
-            if (isLoginWall(pcHtml)) {
+            if (isLoginLanding(pcHtml)) {
                 lastListIssue = "登录态已失效（站点跳到了登录页）。去「论坛」页用网页模式重新登录一次即可"
                 return@withContext PortalBundle()
             }
@@ -307,7 +307,7 @@ class ForumClient(private val http: Http) {
         // 2) 手机版首页：.tabs + #tabs-box 里的四页列表
         val home = http.get("$base/")
         if (home != null && !isServerErrorPage(home)) {
-            if (isLoginWall(home)) {
+            if (isLoginLanding(home)) {
                 lastListIssue = "登录态已失效（站点跳到了登录页）。去「论坛」页用网页模式重新登录一次即可"
                 return@withContext PortalBundle()
             }
@@ -527,7 +527,7 @@ class ForumClient(private val http: Http) {
             lastListIssue = "站点返回错误页（服务器过载或数据库异常）"
             return@withContext ThreadPage()
         }
-        if (isLoginWall(html)) {
+        if (isLoginLanding(html)) {
             lastListIssue = "登录态已失效（站点跳到了登录页）。去「论坛」页用网页模式重新登录一次即可"
             return@withContext ThreadPage()
         }
