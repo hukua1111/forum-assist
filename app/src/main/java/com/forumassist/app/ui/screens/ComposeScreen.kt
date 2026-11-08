@@ -28,6 +28,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -58,7 +59,10 @@ fun ComposeScreen(
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val isReply = !tid.isNullOrBlank()
-    val canPost = site.loggedIn || site.isDemo
+    // 登录态以 Cookie 实际状态为准：网页模式登录过就直接可发
+    LaunchedEffect(site.id) { state.syncLoginState(site) }
+    val liveSite = state.site(site.id) ?: site
+    val canPost = liveSite.loggedIn || liveSite.isDemo
 
     Column(modifier = Modifier.fillMaxSize().imePadding()) {
         Row(

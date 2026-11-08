@@ -8,6 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import com.forumassist.app.data.Board
+import com.forumassist.app.data.BoardFilter
 import com.forumassist.app.data.Demo
 import com.forumassist.app.data.ForumClient
 import com.forumassist.app.data.Http
@@ -18,6 +19,7 @@ import com.forumassist.app.data.SiteDetector
 import com.forumassist.app.data.SiteKind
 import com.forumassist.app.data.Store
 import com.forumassist.app.data.ThreadDetail
+import com.forumassist.app.data.ThreadPage
 import com.forumassist.app.data.ThreadSummary
 import com.forumassist.app.data.profile
 import kotlinx.coroutines.CoroutineScope
@@ -28,6 +30,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 class AppState(context: Context) {
 
@@ -96,6 +99,9 @@ class AppState(context: Context) {
         val pins = storedPins.filter { it.siteId in ids }
         pinnedBoards.addAll(pins.distinctBy { it.key })
         if (pins.size != storedPins.size) store.savePinnedBoards(pinnedBoards)
+
+        // 上次是在网页模式里登录的：启动时把登录态补回来
+        syncAllLoginStates()
     }
 
     /** 尚香书苑判定：名称含「尚香」或域名含 sxsy（地址发布页会换域名） */
@@ -128,6 +134,31 @@ class AppState(context: Context) {
             ?: history.firstOrNull { it.siteId == siteId && it.tid == tid }
 
     fun isFav(key: String): Boolean = favorites.any { it.key == key }
+
+    // ------------------------------------------------------------ 登录态同步（网页 → 原生）
+
+    /**
+     * 用 Cookie 存储里的真实登录态校正 site.loggedIn。
+     * 网页模式登录成功后，Discuz 会写入 `<前缀>_auth` Cookie；只要它存在就算已登录，
+     * 这样发帖/回帖就不会再提示「需要登录」，退出网页登录后也会自动变回未登录。
+     */
+    fun syncLoginState(site: Site) {
+        val host = runCatching { site.baseUrl.toHttpUrlOrNull()?.host }.getOrNull() ?: return
+        val auth = store.cookies().firstOrNull {
+            it.host == host && it.name.endsWith("_auth") && it.value.isNotBlank()
+        }
+        val shouldLogin = auth != null
+        if (shouldLogin == site.loggedIn) return
+        if (shouldLogin) {
+            updateSite(site.copy(cookie = "${auth!!.name}=${auth.value}", username = site.username ?: "网页账号"))
+        } else {
+            updateSite(site.copy(cookie = null))
+        }
+    }
+
+    fun syncAllLoginStates() {
+        sites.toList().forEach { syncLoginState(it) }
+    }
 
     // ------------------------------------------------------------ 板块固定（快捷访问）
 
@@ -407,12 +438,28 @@ class AppState(context: Context) {
     }
 
     suspend fun threads(site: Site, fid: String, page: Int, orderBy: String = "lastpost"):
-        List<ThreadSummary> = withContext(Dispatchers.IO) {
+        List<ThreadSummary> = threadPage(site, fid, page, orderBy).threads
+
+    /** 版块列表 + 页面自带的两层筛选（排序 / 分类） */
+    suspend fun threadPage(
+        site: Site,
+        fid: String,
+        page: Int,
+        orderBy: String = "lastpost",
+        typeId: String = ""
+    ): ThreadPage = withContext(Dispatchers.IO) {
         if (site.isDemo) {
             val name = Demo.boards().firstOrNull { it.fid == fid }?.name
-            return@withContext Demo.threads(name)
+            return@withContext ThreadPage(
+                threads = Demo.threads(name),
+                orders = listOf(
+                    BoardFilter("lastpost", "最新回复"),
+                    BoardFilter("dateline", "最新发表"),
+                    BoardFilter("views", "浏览量")
+                )
+            )
         }
-        client.threads(site, fid, page, orderBy)
+        client.threadPage(site, fid, page, orderBy, typeId)
     }
 
     /** 详情抓取失败时的诊断信息（展示在详情页错误提示里，便于排查） */
@@ -510,7 +557,8 @@ class AppState(context: Context) {
     fun logout(site: Site) {
         // 同时清掉原生存储与网页模式的 Cookie，避免残留旧会话
         http.clearAllCookiesFor(site)
-        updateSite(site.copy(username = null))
+        // cookie 字段是「已登录」标记，必须一起清掉，否则界面还显示已登录
+        updateSite(site.copy(username = null, cookie = null))
         notify("已退出登录")
     }
 

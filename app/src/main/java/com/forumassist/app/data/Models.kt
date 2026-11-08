@@ -76,6 +76,16 @@ data class Board(
     val icon: String = ""
 )
 
+/** 版块筛选选项（第一层=排序 orderby，第二层=分类 typeid） */
+data class BoardFilter(val key: String, val name: String)
+
+/** 版块列表一页的结果：帖子 + 页面自带的筛选选项 */
+data class ThreadPage(
+    val threads: List<ThreadSummary> = emptyList(),
+    val orders: List<BoardFilter> = emptyList(),
+    val types: List<BoardFilter> = emptyList()
+)
+
 /** 固定到底栏「板块」页的快捷入口 */
 data class PinnedBoard(
     val siteId: String,

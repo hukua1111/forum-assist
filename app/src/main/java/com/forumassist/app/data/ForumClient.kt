@@ -396,12 +396,74 @@ class ForumClient(private val http: Http) {
         site: Site,
         fid: String,
         page: Int,
-        orderBy: String = "lastpost"
-    ): List<ThreadSummary> = withContext(Dispatchers.IO) {
-        val html = http.get(pageUrl(site, "forum.php?mod=forumdisplay&fid=$fid&orderby=$orderBy", page))
-            ?: return@withContext emptyList()
-        parseThreads(html, site)
+        orderBy: String = "lastpost",
+        typeId: String = ""
+    ): List<ThreadSummary> = threadPage(site, fid, page, orderBy, typeId).threads
+
+    /**
+     * 版块列表（含页面自带的两层筛选）。
+     *
+     * Discuz 的 forumdisplay 有两级筛选：
+     *  1) 排序：orderby=lastpost / dateline / views
+     *  2) 分类：filter=typeid&typeid=N（尚香每个版块下了「纯爱 / 伦理 / 短篇…」等分类）
+     * 这里把页面上的筛选入口一并解析出来，UI 直接照着渲染，不用写死。
+     */
+    suspend fun threadPage(
+        site: Site,
+        fid: String,
+        page: Int,
+        orderBy: String = "lastpost",
+        typeId: String = ""
+    ): ThreadPage = withContext(Dispatchers.IO) {
+        val typePart = if (typeId.isNotBlank()) "&filter=typeid&typeid=$typeId" else ""
+        val html = http.get(
+            pageUrl(site, "forum.php?mod=forumdisplay&fid=$fid&orderby=$orderBy$typePart", page)
+        ) ?: return@withContext ThreadPage()
+        val doc = Jsoup.parse(html, site.baseUrl)
+        val (orders, types) = parseFilters(doc)
+        ThreadPage(
+            threads = parseThreads(html, site),
+            orders = if (page <= 1) orders else emptyList(),
+            types = if (page <= 1) types else emptyList()
+        )
     }
+
+    /**
+     * 解析筛选栏：`.dhnav_box` 是排序（手机版），`.dhnavs_box` 是分类；
+     * 电脑版结构不同，退化为全页扫描带 orderby/typeid 参数的链接。
+     * 取不到时给一份默认排序，保证 UI 至少能用。
+     */
+    private fun parseFilters(doc: Document): Pair<List<BoardFilter>, List<BoardFilter>> {
+        val orderScope = doc.selectFirst("div.dhnav_box") ?: doc
+        val typeScope = doc.selectFirst("div.dhnavs_box") ?: doc
+
+        val orders = orderScope.select("a[href*=orderby]").mapNotNull { a ->
+            val key = Regex("orderby=([A-Za-z_]+)").find(a.attr("href"))?.groupValues?.get(1)
+                ?: return@mapNotNull null
+            val name = a.text().trim()
+            // 「全部」这种入口不是排序方式
+            if (name.isBlank() || name.startsWith("#") || name == "全部" || name.length > 8) null
+            else BoardFilter(key, name)
+        }.distinctBy { it.key }
+
+        val types = typeScope.select("a[href*=typeid]").mapNotNull { a ->
+            val raw = a.text().trim()
+            val key = Regex("typeid=(\\d+)").find(a.attr("href"))?.groupValues?.get(1)
+                ?: return@mapNotNull null
+            // 帖子卡片上的 "#伦理" 标签也带 typeid，这里只要筛选栏里的纯文字项
+            if (raw.isBlank() || raw.startsWith("#") || raw == "全部分类" || raw.length > 10) null
+            else BoardFilter(key, raw)
+        }.distinctBy { it.key }
+
+        return (orders.ifEmpty {
+            listOf(
+                BoardFilter("lastpost", "最新回复"),
+                BoardFilter("dateline", "最新发表"),
+                BoardFilter("views", "浏览量")
+            )
+        }) to types
+    }
+
 
     suspend fun search(site: Site, keyword: String): List<ThreadSummary> = withContext(Dispatchers.IO) {
         val q = java.net.URLEncoder.encode(keyword, "UTF-8")

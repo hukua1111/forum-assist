@@ -51,6 +51,7 @@ import java.io.ByteArrayInputStream
 fun WebScreen(
     url: String,
     title: String,
+    onPageLoaded: () -> Unit = {},
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
@@ -213,8 +214,11 @@ fun WebScreen(
                                     val hadLogin = http.hasLoginCookieForUrl(target)
                                     val ok = http.importWebCookies(target)
                                     if (ok && !hadLogin) {
+                                        // 网页里刚登录：把登录态同步给站点，发帖/回帖不再提示需要登录
+                                        com.forumassist.app.App.state.syncAllLoginStates()
                                         com.forumassist.app.App.state.loadFeed(reset = true)
                                     }
+                                    onPageLoaded()
                                 }
                                 // 隐藏页面里的广告位（与网络层拦截配合）
                                 if (adBlockOn) {

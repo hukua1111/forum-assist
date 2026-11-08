@@ -194,6 +194,16 @@ fun SettingsScreen(state: AppState, onBack: () -> Unit) {
                     }
                 )
                 SettingRow(
+                    title = "发帖按钮",
+                    desc = if (s.showComposeButton) "版块页右下角显示「发帖」按钮" else "已隐藏，只保留阅读",
+                    trailing = {
+                        Switch(
+                            checked = s.showComposeButton,
+                            onCheckedChange = { state.updateSettings(s.copy(showComposeButton = it)) }
+                        )
+                    }
+                )
+                SettingRow(
                     title = "屏蔽关键词",
                     desc = if (s.blockedKeywords.isEmpty()) "未设置" else s.blockedKeywords.joinToString("、"),
                     icon = Icons.Outlined.Block,

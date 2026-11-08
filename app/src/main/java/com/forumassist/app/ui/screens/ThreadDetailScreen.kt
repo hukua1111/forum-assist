@@ -102,6 +102,9 @@ fun ThreadDetailScreen(
     // 防盗链校验的是帖子页，不是站点根目录
     val referer = thread.url.ifBlank { url }
 
+    // 网页模式登录过的账号，进正文后就该是「已登录」
+    LaunchedEffect(site.id) { state.syncLoginState(site) }
+
     LaunchedEffect(thread.key) {
         loading = true
         detail = state.detail(site, thread.tid, 1, thread.url)
@@ -313,9 +316,10 @@ fun ThreadDetailScreen(
             }
         }
 
+        val liveSite = state.site(site.id) ?: site
         ReplyBar(
-            loggedIn = site.loggedIn || site.isDemo,
-            onReply = { if (site.loggedIn || site.isDemo) onReply() else onLogin() }
+            loggedIn = liveSite.loggedIn || liveSite.isDemo,
+            onReply = { if (liveSite.loggedIn || liveSite.isDemo) onReply() else onLogin() }
         )
     }
 }
