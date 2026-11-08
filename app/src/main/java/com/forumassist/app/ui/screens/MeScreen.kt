@@ -98,9 +98,8 @@ fun MeScreen(
             Spacer(Modifier.height(18.dp))
 
             Surface(
-                shape = RoundedCornerShape(18.dp),
+                shape = RoundedCornerShape(16.dp),
                 color = MiuixTheme.colorScheme.surfaceContainer,
-                border = androidx.compose.foundation.BorderStroke(1.dp, MiuixTheme.colorScheme.dividerLine),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(modifier = Modifier.padding(vertical = 16.dp)) {

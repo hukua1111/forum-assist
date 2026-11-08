@@ -117,7 +117,7 @@ fun SitesScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable { showAdd = true },
-                    shape = RoundedCornerShape(18.dp),
+                    shape = RoundedCornerShape(16.dp),
                     color = MiuixTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.5f)
                 ) {
                     Row(
@@ -199,9 +199,8 @@ private fun SiteRow(
             .fillMaxWidth()
             .clip(RoundedCornerShape(18.dp))
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(16.dp),
         color = MiuixTheme.colorScheme.surfaceContainer,
-        border = androidx.compose.foundation.BorderStroke(1.dp, MiuixTheme.colorScheme.dividerLine)
     ) {
         Row(
             modifier = Modifier.padding(14.dp),

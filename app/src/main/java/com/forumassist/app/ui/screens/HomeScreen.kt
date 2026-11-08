@@ -71,11 +71,7 @@ fun HomeScreen(
         if (shouldLoadMore) state.loadMoreFeed()
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(bottom = 0.dp)
-    ) {
+    Column(modifier = Modifier.fillMaxSize()) {
         HomeHeader(state, onSearch, onOpenSites)
         TabRow(
             tabs = listOf("最新主题", "最新回复", "热帖"),

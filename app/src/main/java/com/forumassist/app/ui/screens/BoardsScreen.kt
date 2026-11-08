@@ -223,9 +223,6 @@ private fun BoardRow(
         shape = RoundedCornerShape(16.dp),
         color = if (blocked) MiuixTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.45f)
         else MiuixTheme.colorScheme.surfaceContainer,
-        border = androidx.compose.foundation.BorderStroke(
-            1.dp, MiuixTheme.colorScheme.dividerLine
-        )
     ) {
         Row(
             modifier = Modifier.padding(13.dp),

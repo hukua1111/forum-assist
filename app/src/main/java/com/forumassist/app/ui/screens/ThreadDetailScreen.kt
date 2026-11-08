@@ -890,9 +890,8 @@ private fun PostCard(post: Post, site: Site, accent: Color, onOpenUrl: (String) 
     val profile = site.profile
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(16.dp),
         color = MiuixTheme.colorScheme.surfaceContainer,
-        border = androidx.compose.foundation.BorderStroke(1.dp, MiuixTheme.colorScheme.dividerLine)
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {

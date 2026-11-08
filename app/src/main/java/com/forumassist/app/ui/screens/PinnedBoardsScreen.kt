@@ -135,7 +135,6 @@ private fun PinnedRow(
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(16.dp),
         color = MiuixTheme.colorScheme.surfaceContainer,
-        border = androidx.compose.foundation.BorderStroke(1.dp, MiuixTheme.colorScheme.dividerLine)
     ) {
         Row(
             modifier = Modifier.padding(start = 13.dp, end = 6.dp, top = 13.dp, bottom = 13.dp),
