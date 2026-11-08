@@ -93,9 +93,14 @@ class Http(private val store: Store) {
         "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) " +
             "Chrome/124.0.0.0 Mobile Safari/537.36"
 
-    fun get(url: String, referer: String? = null): String? = runCatching {
+    /** 桌面 UA：部分内容（如 Discuz 首页四格）只在电脑版模板里存在 */
+    private val desktopUa =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) " +
+            "Chrome/124.0.0.0 Safari/537.36"
+
+    fun get(url: String, referer: String? = null, desktop: Boolean = false): String? = runCatching {
         val builder = Request.Builder().url(url).get()
-            .header("User-Agent", ua)
+            .header("User-Agent", if (desktop) desktopUa else ua)
             .header("Accept-Language", "zh-CN,zh;q=0.9")
             .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
         referer?.let { builder.header("Referer", it) }

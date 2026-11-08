@@ -44,22 +44,21 @@ class ForumClient(private val http: Http) {
 
     suspend fun guide(site: Site, view: String, page: Int): List<ThreadSummary> =
         withContext(Dispatchers.IO) {
-            val html = http.get(pageUrl(site, "forum.php?mod=guide&view=$view", page))
-                ?: return@withContext emptyList()
-            if (isServerErrorPage(html)) return@withContext emptyList()
+            val url = pageUrl(site, "forum.php?mod=guide&view=$view", page)
+            var html = http.get(url, desktop = true)
+            if (html == null || isServerErrorPage(html)) html = http.get(url)
+            if (html == null || isServerErrorPage(html)) return@withContext emptyList()
+
+            // 手机模板常常没有 guide 模块，会重定向回首页；此时解析出来的只是广告位里的几条公告，
+            // 不能当成信息流，直接判空交给上层（门户四格/缓存）处理。
+            if (html.contains("ma-text-grid") || html.contains("id=\"tabs-box\"")) {
+                return@withContext emptyList()
+            }
             parseThreads(html, site)
         }
 
     // ------------------------------------------------- 地址发布页解析
 
-    /**
-     * 从「地址发布页」解析站点最新可用域名。
-     * 通用策略（不针对单一站点）：
-     *  1) 页面里的 <a href> 绝对链接
-     *  2) 纯文本中出现的域名
-     *  3) base64 混淆内容里解码出的链接
-     * 然后逐个探测，命中 Discuz 特征才采用（可过滤掉发布页自身/其它镜像页）。
-     */
     /** 发布页里常见的第三方域名，避免把社群/统计链接误当成站点地址 */
     private val NOISE_HOSTS = listOf(
         "t.me", "telegram.me", "telegram.org", "telegram.dog",
@@ -197,9 +196,25 @@ class ForumClient(private val http: Http) {
      * view: newthread / newreply / hot / digest
      */
     suspend fun portal(site: Site, view: String): List<ThreadSummary> = withContext(Dispatchers.IO) {
-        val html = http.get(site.baseUrl.trimEnd('/') + "/") ?: return@withContext emptyList()
-        if (isServerErrorPage(html)) return@withContext emptyList()
-        parsePortal(html, site, view)
+        val base = site.baseUrl.trimEnd('/')
+
+        // 1) 优先「电脑版」：首页四格带 tip 属性，作者/查看/回复齐全
+        val pcHtml = http.get("$base/forum.php?mobile=no", desktop = true)
+        if (pcHtml != null && !isServerErrorPage(pcHtml)) {
+            val pc = parsePortal(pcHtml, site, view)
+            if (pc.isNotEmpty()) return@withContext pc
+            // 站点忽略 mobile=no（仍回手机模板）时，直接解析手机版的四页 tab
+            val mb = parsePortalMobile(pcHtml, site, view)
+            if (mb.isNotEmpty()) return@withContext mb
+        }
+
+        // 2) 手机版首页：.tabs + #tabs-box 里的四页列表
+        val home = http.get("$base/")
+        if (home != null && !isServerErrorPage(home)) {
+            val mb = parsePortalMobile(home, site, view)
+            if (mb.isNotEmpty()) return@withContext mb
+        }
+        emptyList()
     }
 
     /** 站点自身报错页（Discuz 数据库错误 / SQL 错误 / 空壳），当作抓取失败处理 */
@@ -260,6 +275,67 @@ class ForumClient(private val http: Http) {
             }
         }
         return TipMeta(title, author, time, views, replies)
+    }
+
+    /**
+     * 手机模板首页的「四页 tab」：最新主题 / 最新回复 / 论坛热帖 / 精华帖子。
+     * 结构：div.tabs a（页签）+ #tabs-box .swiper-slide（同序四页 ul>li>a）。
+     * 条目形如 <a><span class="mybk">半小时前</span><span class="mico"></span>标题</a>，
+     * 热帖页的前缀是「2449 人气」并带 <span class="mnum">排名</span>。
+     */
+    private fun parsePortalMobile(html: String, site: Site, view: String): List<ThreadSummary> {
+        val doc = Jsoup.parse(html, site.baseUrl)
+        val tabs = doc.select("div.tabs a")
+        if (tabs.isEmpty()) return emptyList()
+
+        val want = when (view) {
+            "newreply" -> "最新回复"
+            "hot" -> "热帖"
+            "digest" -> "精华"
+            else -> "最新主题"
+        }
+        var index = -1
+        tabs.forEachIndexed { i, a -> if (index < 0 && a.text().trim().contains(want)) index = i }
+        if (index < 0) return emptyList()
+
+        val slide = doc.select("#tabs-box .swiper-slide").getOrNull(index) ?: return emptyList()
+        val out = LinkedHashMap<String, ThreadSummary>()
+        for (a in slide.select("li a[href]")) {
+            val href = a.attr("href")
+            val tid = tidOf(href) ?: continue
+            if (out.containsKey(tid)) continue
+
+            val badge = a.selectFirst("span.mybk")?.text()?.trim().orEmpty()
+            val clone = a.clone()
+            clone.select("span.mybk, span.mico, span.mnum").remove()
+            val title = clone.text().trim()
+            if (title.length < 2) continue
+
+            val replies = Regex("(\\d+)\\s*回复").find(badge)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+            val views = Regex("(\\d+)\\s*人气").find(badge)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+
+            // badge 有三种：时间（最新主题）、N 回复（最新回复）、N 人气（热帖）；
+            // 精华页的 badge 是作者名，需要放回 author 字段而不是当成时间。
+            val timeLike = Regex(
+                "(\\d+\\s*(?:秒|分钟|小时|天)前|半小时前|刚刚|昨天|前天|\\d{4}-\\d{1,2}-\\d{1,2}|\\d{1,2}-\\d{1,2})"
+            ).containsMatchIn(badge)
+            val timeRaw = if (timeLike) badge else ""
+            val badgeAuthor = if (timeLike || replies > 0 || views > 0) "" else badge
+
+            out[tid] = ThreadSummary(
+                siteId = site.id,
+                tid = tid,
+                fid = Regex("fid=(\\d+)").find(href)?.groupValues?.get(1) ?: "",
+                title = title,
+                author = badgeAuthor,
+                replies = replies,
+                views = views,
+                lastTime = timeRaw,
+                ts = TimeUtil.parse(timeRaw),
+                url = runCatching { a.absUrl("href") }.getOrDefault("").ifBlank { href }
+            )
+        }
+        return out.values.toList()
     }
 
     fun parsePortal(html: String, site: Site, view: String): List<ThreadSummary> {
@@ -329,7 +405,10 @@ class ForumClient(private val http: Http) {
     fun parseThreads(html: String, site: Site): List<ThreadSummary> {
         val doc = Jsoup.parse(html, site.baseUrl)
         val map = LinkedHashMap<String, ThreadSummary>()
-        val links = doc.select("a[href*=viewthread], a[href*=thread-]")
+        // 跳过手机版首页的广告位/四页 tab 链接，避免把「新人必看」这类公告当成信息流
+        val links = doc.select("a[href*=viewthread], a[href*=thread-]").filter {
+            it.closest(".ma-text-grid, .mobile-adv, .tabs, #tabs-box") == null
+        }
         for (a in links) {
             val href = a.attr("href")
             val tid = tidOf(href) ?: continue
