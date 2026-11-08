@@ -140,12 +140,18 @@ fun AppRoot() {
                     .fillMaxSize()
                     .padding(inner)
             ) {
+                // 点开即算已读：不用等正文抓取成功，返回列表就是灰的
+                val openThread: (ThreadSummary) -> Unit = { t ->
+                    state.markRead(t)
+                    nav.navigate(threadRoute(t))
+                }
+
                 NavHost(navController = nav, startDestination = "home") {
 
                     composable("home") {
                         HomeScreen(
                             state = state,
-                            onOpenThread = { t -> nav.navigate(threadRoute(t)) },
+                            onOpenThread = openThread,
                             onSearch = { nav.navigate("search") },
                             onOpenSites = { nav.navigate("sites") }
                         )
@@ -173,7 +179,7 @@ fun AppRoot() {
                     composable("shelf") {
                         FavoritesScreen(
                             state = state,
-                            onOpenThread = { t -> nav.navigate(threadRoute(t)) },
+                            onOpenThread = openThread,
                             onBrowse = { nav.navigate("home") }
                         )
                     }
@@ -195,7 +201,7 @@ fun AppRoot() {
                         SearchScreen(
                             state = state,
                             onBack = { nav.popBackStack() },
-                            onOpenThread = { t -> nav.navigate(threadRoute(t)) }
+                            onOpenThread = openThread
                         )
                     }
 
@@ -239,7 +245,7 @@ fun AppRoot() {
                             fid = fid,
                             boardName = name,
                             onBack = { nav.popBackStack() },
-                            onOpenThread = { t -> nav.navigate(threadRoute(t)) },
+                            onOpenThread = openThread,
                             onCompose = { nav.navigate("compose/${site.id}?fid=$fid") }
                         )
                     }

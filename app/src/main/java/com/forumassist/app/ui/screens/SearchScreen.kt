@@ -130,6 +130,7 @@ fun SearchScreen(
                         thread = t,
                         siteName = state.siteName(t.siteId),
                         siteColor = state.site(t.siteId)?.color ?: 0xFF888888.toInt(),
+                        read = state.isRead(t.key),
                         onClick = { onOpenThread(t) }
                     )
                 }

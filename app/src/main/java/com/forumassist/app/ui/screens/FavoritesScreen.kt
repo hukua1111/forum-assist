@@ -116,6 +116,7 @@ fun FavoritesScreen(
                         siteName = state.siteName(t.siteId),
                         siteColor = state.site(t.siteId)?.color ?: 0xFF888888.toInt(),
                         newReplies = 0,
+                        read = state.isRead(t.key),
                         onClick = { onOpenThread(t) }
                     )
                 }

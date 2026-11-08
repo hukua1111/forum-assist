@@ -133,7 +133,7 @@ fun MeScreen(
             )
             SettingRow(
                 title = "清理缓存",
-                desc = "离线帖子与阅读记录",
+                desc = "正文、图片与离线帖子",
                 icon = Icons.Outlined.CleaningServices,
                 onClick = { state.clearCache() }
             )
@@ -144,7 +144,7 @@ fun MeScreen(
         SoftCard(modifier = Modifier.padding(horizontal = 14.dp)) {
             SettingRow(
                 title = "关于论坛助手",
-                desc = "版本 1.0.0 · 开源仿写",
+                desc = "版本 ${com.forumassist.app.BuildConfig.VERSION_NAME} · 开源仿写",
                 icon = Icons.Outlined.Info,
                 onClick = { showAbout = true }
             )

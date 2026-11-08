@@ -40,18 +40,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.forumassist.app.AppState
 import com.forumassist.app.data.BoardFilter
+import com.forumassist.app.data.DefaultBoardOrders
 import com.forumassist.app.data.Site
 import com.forumassist.app.data.ThreadSummary
 import com.forumassist.app.ui.components.EmptyState
 import com.forumassist.app.ui.components.ThreadCard
 
-private val DEFAULT_ORDERS = listOf(
-    BoardFilter("lastpost", "最新"),
-    BoardFilter("heats", "热门"),
-    BoardFilter("dateline", "发帖时间"),
-    BoardFilter("replies", "回复/查看"),
-    BoardFilter("views", "查看")
-)
+private val DEFAULT_ORDERS = DefaultBoardOrders
 
 @Composable
 fun ThreadListScreen(
@@ -63,10 +58,12 @@ fun ThreadListScreen(
     onOpenThread: (ThreadSummary) -> Unit,
     onCompose: () -> Unit
 ) {
-    var order by remember { mutableStateOf("lastpost") }
-    var typeId by remember { mutableStateOf("") }
-    var orders by remember { mutableStateOf(DEFAULT_ORDERS) }
-    var types by remember { mutableStateOf<List<BoardFilter>>(emptyList()) }
+    // 第一层用 key 记选中项，真正请求用的是它的 query（页面链接原文）
+    var orderKey by remember(fid, site.id) { mutableStateOf("") }
+    var typeKey by remember(fid, site.id) { mutableStateOf("") }
+    val orders = DEFAULT_ORDERS
+    // 换版块时分类列表要重来，否则会带着上一个版块的 typeid 去请求
+    var types by remember(fid, site.id) { mutableStateOf<List<BoardFilter>>(emptyList()) }
     var items by remember { mutableStateOf<List<ThreadSummary>>(emptyList()) }
     var page by remember { mutableStateOf(1) }
     var loading by remember { mutableStateOf(true) }
@@ -80,21 +77,34 @@ fun ThreadListScreen(
 
     LaunchedEffect(site.id) { state.syncLoginState(site) }
 
-    LaunchedEffect(site.id, fid, order, typeId, reloadKey) {
+    LaunchedEffect(site.id, fid, orderKey, typeKey, reloadKey) {
         loading = true
         error = null
         end = false
         page = 1
-        val data = state.threadPage(site, fid, 1, order, typeId)
-        items = data.threads
-        if (data.orders.isNotEmpty()) orders = data.orders
-        if (data.types.isNotEmpty()) types = data.types
-        end = data.threads.isEmpty()
-        if (data.threads.filterNot { it.isTop }.isEmpty()) {
-            error = if (data.threads.isEmpty()) "这个版块暂时没有内容，可能会员可见或需要登录"
-            else "这个分类下只有置顶帖"
+        // 立刻清空：以前保留旧列表且不显示任何加载状态，
+        // 点筛选看起来像「界面没刷新」，其实只是新数据还没回来
+        items = emptyList()
+        runCatching { listState.scrollToItem(0) }
+
+        try {
+            val orderQuery = orders.firstOrNull { it.key == orderKey }?.query.orEmpty()
+            val typeQuery = types.firstOrNull { it.key == typeKey }?.query.orEmpty()
+            val data = state.threadPage(site, fid, 1, orderQuery, typeQuery)
+            items = data.threads
+            if (data.types.isNotEmpty()) types = data.types
+            end = data.threads.isEmpty()
+            if (data.threads.filterNot { it.isTop }.isEmpty()) {
+                error = if (data.threads.isEmpty()) "这个版块暂时没有内容，可能会员可见或需要登录"
+                else "这个分类下只有置顶帖"
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            error = "加载失败：" + (e.message ?: "未知错误")
+        } finally {
+            loading = false
         }
-        loading = false
     }
 
     val shouldLoadMore by remember {
@@ -106,14 +116,25 @@ fun ThreadListScreen(
     LaunchedEffect(shouldLoadMore) {
         if (shouldLoadMore) {
             loading = true
-            page += 1
-            val more = state.threadPage(site, fid, page, order, typeId).threads
-            if (more.isEmpty()) {
+            val next = page + 1
+            try {
+                val orderQuery = orders.firstOrNull { it.key == orderKey }?.query.orEmpty()
+                val typeQuery = types.firstOrNull { it.key == typeKey }?.query.orEmpty()
+                val more = state.threadPage(site, fid, next, orderQuery, typeQuery).threads
+                page = next
+                if (more.isEmpty()) {
+                    end = true
+                } else {
+                    items = items + more.filterNot { n -> items.any { it.key == n.key } }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // 翻页失败就当到底，别在滚动时一直重试
                 end = true
-            } else {
-                items = items + more.filterNot { n -> items.any { it.key == n.key } }
+            } finally {
+                loading = false
             }
-            loading = false
         }
     }
 
@@ -143,18 +164,18 @@ fun ThreadListScreen(
                 }
             }
 
-            // 第一层：排序
+            // 第一层：排序（全部 / 最新回复 / 最新发表 / 热门 / 精华）
             FilterChips(
                 options = orders,
-                selectedKey = order,
-                onSelect = { order = it }
+                selectedKey = orderKey,
+                onSelect = { if (it != orderKey) orderKey = it }
             )
             // 第二层：分类（页面没有分类时不显示）
             if (types.isNotEmpty()) {
                 FilterChips(
                     options = listOf(BoardFilter("", "全部")) + types,
-                    selectedKey = typeId,
-                    onSelect = { typeId = it }
+                    selectedKey = typeKey,
+                    onSelect = { if (it != typeKey) typeKey = it }
                 )
             }
 
@@ -164,7 +185,7 @@ fun ThreadListScreen(
                 }
 
                 visible.isEmpty() -> EmptyState(
-                    title = "没有帖子",
+                    title = if (error != null) "这里没有帖子" else "没有帖子",
                     desc = error ?: "换个排序方式或分类试试",
                     actionLabel = "重新加载",
                     onAction = { reloadKey += 1 }
@@ -181,6 +202,7 @@ fun ThreadListScreen(
                             siteName = site.name,
                             siteColor = site.color,
                             newReplies = state.newReplyCount(t),
+                            read = state.isRead(t.key),
                             onClick = { onOpenThread(t) }
                         )
                     }

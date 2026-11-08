@@ -5,6 +5,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -396,99 +397,72 @@ class ForumClient(private val http: Http) {
         site: Site,
         fid: String,
         page: Int,
-        orderBy: String = "lastpost",
-        typeId: String = ""
-    ): List<ThreadSummary> = threadPage(site, fid, page, orderBy, typeId).threads
+        orderBy: String = "lastpost"
+    ): List<ThreadSummary> = threadPage(site, fid, page, orderQuery = boardOrderQuery(orderBy)).threads
 
     /**
-     * 版块列表（含页面自带的两层筛选）。
+     * 版块列表（含页面自带的分类筛选）。
      *
-     * Discuz 的 forumdisplay 有两级筛选：
-     *  1) 排序：orderby=lastpost / dateline / views
-     *  2) 分类：filter=typeid&typeid=N（尚香每个版块下了「纯爱 / 伦理 / 短篇…」等分类）
-     * 这里把页面上的筛选入口一并解析出来，UI 直接照着渲染，不用写死。
+     * Discuz 的 forumdisplay 有两组参数：
+     *  1) 排序：filter=lastpost/dateline/heat/digest + orderby=...
+     *  2) 分类：filter=typeid&typeid=N
+     * 两组都带 filter，Discuz 只认最后一个，所以分类参数放后面。
+     *
+     * 参数直接由 [BoardFilter.query] 传进来（就是页面链接里的原文），
+     * 不再做 orderby→filter 的猜测映射——猜错时界面点了没反应，看起来像「不刷新」。
      */
     suspend fun threadPage(
         site: Site,
         fid: String,
         page: Int,
-        orderBy: String = "lastpost",
-        typeId: String = ""
+        orderQuery: String = "",
+        typeQuery: String = ""
     ): ThreadPage = withContext(Dispatchers.IO) {
-        // Discuz 的排序要靠 filter 参数配合，只给 orderby 会被忽略：
-        // filter=author / reply / heat / lastpost 分别对应 发帖时间 / 回复查看 / 热门 / 最新
-        val filter = when (orderBy) {
-            "dateline" -> "author"
-            "replies", "views" -> "reply"
-            "heats" -> "heat"
-            else -> "lastpost"
-        }
-        // 分类筛选的 filter=typeid 要放在后面，Discuz 取最后一个 filter
-        val typePart = if (typeId.isNotBlank()) "&filter=typeid&typeid=$typeId" else ""
-        val html = http.get(
-            pageUrl(
-                site,
-                "forum.php?mod=forumdisplay&fid=$fid&filter=$filter&orderby=$orderBy$typePart",
-                page
-            )
-        ) ?: return@withContext ThreadPage()
+        val query = listOf(orderQuery.trim(), typeQuery.trim())
+            .filter { it.isNotEmpty() }
+            .joinToString("&")
+        val path = "forum.php?mod=forumdisplay&fid=$fid" + if (query.isEmpty()) "" else "&$query"
+        val html = http.get(pageUrl(site, path, page)) ?: return@withContext ThreadPage()
         val doc = Jsoup.parse(html, site.baseUrl)
-        val (orders, types) = parseFilters(doc)
         ThreadPage(
             threads = parseThreads(html, site),
-            orders = if (page <= 1) orders else emptyList(),
-            types = if (page <= 1) types else emptyList()
+            // 第一层排序是固定的（DefaultBoardOrders），这里只需解析第二层分类
+            orders = if (page <= 1) DefaultBoardOrders else emptyList(),
+            types = if (page <= 1) parseTypes(doc) else emptyList()
         )
     }
 
     /**
-     * 解析筛选栏：`.dhnav_box` 是排序（手机版），`.dhnavs_box` 是分类；
-     * 电脑版结构不同，退化为全页扫描带 orderby/typeid 参数的链接。
-     * 取不到时给一份默认排序，保证 UI 至少能用。
+     * 解析分类筛选栏（第二层）。
+     *
+     * 手机版在 `.dhnavs_box` 里，电脑版是 `#threadlist` 上方的一列 ul。
+     * 限定不到范围就全页扫描，再靠命名规则把帖子卡片上的「#标签」排掉。
      */
-    private fun parseFilters(doc: Document): Pair<List<BoardFilter>, List<BoardFilter>> {
-        val orderScope = doc.selectFirst("div.dhnav_box") ?: doc
-        val typeScope = doc.selectFirst("div.dhnavs_box") ?: doc
-
-        val orders = orderScope.select("a[href*=orderby]").mapNotNull { a ->
-            val href = a.attr("href")
-            // 带 dateline= 的是「时间范围」（一天/一周/一个月），不是排序方式
-            if (href.contains("dateline=")) return@mapNotNull null
-            val key = Regex("orderby=([A-Za-z_]+)").find(href)?.groupValues?.get(1)
-                ?: return@mapNotNull null
-            val name = a.text().trim()
-            // 「全部」这种入口不是排序方式
-            if (name.isBlank() || name.startsWith("#") || name == "全部" || name.length > 8) null
-            else BoardFilter(key, name)
-        }
-            // 同一个排序可能有好几个别名（「最新」和「最后发表」都是 lastpost），留最短的那个
-            .groupBy { it.key }
-            .map { (_, list) -> list.minByOrNull { it.name.length } ?: list.first() }
-
-        val types = typeScope.select("a[href*=typeid]").mapNotNull { a ->
+    private fun parseTypes(doc: Document): List<BoardFilter> {
+        fun collect(root: Element): List<BoardFilter> = root.select("a[href*=typeid]").mapNotNull { a ->
             val key = Regex("typeid=(\\d+)").find(a.attr("href"))?.groupValues?.get(1)
                 ?: return@mapNotNull null
-            // 分类名后面跟着这个分类的主题数（如「NTR被绿 35327」），只留名字
-            val name = a.text()
-                .replace('\u00A0', ' ')
-                .replace(Regex("\\s*\\d+\\s*$"), "")
-                .trim()
-            // 帖子卡片上的 "#伦理" 标签也带 typeid，这里只要筛选栏里的纯文字项
+            // 「纯爱<span class="xg1 num">20233</span>」：ownText 只取链接自身的文字，天然不含主题数
+            var name = a.ownText().replace('\u00A0', ' ').trim()
+            if (name.isBlank()) {
+                name = a.text()
+                    .replace('\u00A0', ' ')
+                    .replace(Regex("\\s*\\d+\\s*$"), "")
+                    .trim()
+            }
             if (name.isBlank() || name.startsWith("#") || name == "全部分类" || name.length > 12) null
-            else BoardFilter(key, name)
+            else BoardFilter(key, name, "filter=typeid&typeid=$key")
         }
-            .groupBy { it.key }
-            .map { (_, list) -> list.minByOrNull { it.name.length } ?: list.first() }
 
-        return (orders.ifEmpty {
-            listOf(
-                BoardFilter("lastpost", "最新"),
-                BoardFilter("heats", "热门"),
-                BoardFilter("dateline", "发帖时间"),
-                BoardFilter("replies", "回复/查看"),
-                BoardFilter("views", "查看")
-            )
-        }) to types
+        // 先按已知位置找（手机版 .dhnavs_box / 电脑版 #threadlist 外层），找不到再全页扫
+        val scoped = doc.selectFirst("div.dhnavs_box")
+            ?.let { collect(it) }
+            ?: doc.selectFirst("#threadlist")?.parent()?.let { collect(it) }
+            ?: emptyList()
+        val list = scoped.ifEmpty { collect(doc) }
+        return list
+            .groupBy { it.key }
+            .map { (_, group) -> group.minByOrNull { it.name.length } ?: group.first() }
     }
 
 
@@ -669,9 +643,17 @@ class ForumClient(private val http: Http) {
         }
 
         try {
-            // 全部入口同时发：以前先给第一个 2.5 秒，失败了才并发，等于白等 2.5 秒。
-            // 正常一两个入口就能拿到正文，剩下的在命中后立即取消。
-            candidates.forEach { fire(it) }
+            // 先发两个主入口（列表原链 + 手机版），1.2 秒没命中再补发备用入口。
+            // 四个入口同时下载整页（每页几百 KB）会互相抢带宽，正常情况反而更慢。
+            val primary = candidates.take(2)
+            val backup = candidates.drop(2)
+            primary.forEach { fire(it) }
+            if (backup.isNotEmpty()) {
+                scope.launch {
+                    delay(1_200L)
+                    if (!first.isCompleted) backup.forEach { fire(it) }
+                }
+            }
             val hit = withTimeoutOrNull(6_500L) { first.await() }
             lastDetailDebug = hit?.let { "成功：${it.posts.size} 楼（并发探测）" }
                 ?: diag.toString().ifBlank { "并发探测 ${candidates.size} 个入口均未拿到正文" }

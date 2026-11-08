@@ -8,7 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import com.forumassist.app.data.Board
-import com.forumassist.app.data.BoardFilter
+import com.forumassist.app.data.DefaultBoardOrders
 import com.forumassist.app.data.Demo
 import com.forumassist.app.data.ForumClient
 import com.forumassist.app.data.Http
@@ -21,6 +21,7 @@ import com.forumassist.app.data.Store
 import com.forumassist.app.data.ThreadDetail
 import com.forumassist.app.data.ThreadPage
 import com.forumassist.app.data.ThreadSummary
+import com.forumassist.app.data.boardOrderQuery
 import com.forumassist.app.data.profile
 import com.forumassist.app.data.withSections
 import kotlinx.coroutines.CoroutineScope
@@ -504,30 +505,24 @@ class AppState(context: Context) {
     }
 
     suspend fun threads(site: Site, fid: String, page: Int, orderBy: String = "lastpost"):
-        List<ThreadSummary> = threadPage(site, fid, page, orderBy).threads
+        List<ThreadSummary> = threadPage(site, fid, page, boardOrderQuery(orderBy)).threads
 
-    /** 版块列表 + 页面自带的两层筛选（排序 / 分类） */
+    /** 版块列表 + 页面自带的分类筛选（排序固定，分类从页面解析） */
     suspend fun threadPage(
         site: Site,
         fid: String,
         page: Int,
-        orderBy: String = "lastpost",
-        typeId: String = ""
+        orderQuery: String = "",
+        typeQuery: String = ""
     ): ThreadPage = withContext(Dispatchers.IO) {
         if (site.isDemo) {
             val name = Demo.boards().firstOrNull { it.fid == fid }?.name
             return@withContext ThreadPage(
                 threads = Demo.threads(name),
-                orders = listOf(
-                    BoardFilter("lastpost", "最新"),
-                    BoardFilter("heats", "热门"),
-                    BoardFilter("dateline", "发帖时间"),
-                    BoardFilter("replies", "回复/查看"),
-                    BoardFilter("views", "查看")
-                )
+                orders = DefaultBoardOrders
             )
         }
-        client.threadPage(site, fid, page, orderBy, typeId)
+        client.threadPage(site, fid, page, orderQuery, typeQuery)
     }
 
     /** 详情抓取失败时的诊断信息（展示在详情页错误提示里，便于排查） */
@@ -712,6 +707,9 @@ class AppState(context: Context) {
 
     fun isOffline(key: String): Boolean = offline.any { it.key == key }
 
+    /** 是否读过（列表里据此置灰）；设置里可以关掉这个效果 */
+    fun isRead(key: String): Boolean = settings.readGray && readMarks.containsKey(key)
+
     fun markRead(t: ThreadSummary) {
         readMarks[t.key] = t.replies
         store.saveReadMarks(readMarks)
@@ -734,9 +732,11 @@ class AppState(context: Context) {
     }
 
     fun clearCache() {
-        store.clearCache()
+        val ok = store.clearCache()
         offline.clear()
         history.clear()
-        notify("缓存已清理")
+        // 内存里的正文缓存也要一起清，否则「清完了还能秒开」会让人以为没生效
+        synchronized(detailCache) { detailCache.clear() }
+        notify(if (ok) "缓存已清理（含正文与图片）" else "已清理，部分文件被占用")
     }
 }

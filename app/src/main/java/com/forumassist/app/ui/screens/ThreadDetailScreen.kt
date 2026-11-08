@@ -77,7 +77,6 @@ import com.forumassist.app.ui.components.HtmlRenderFallback
 import com.forumassist.app.ui.components.SiteAvatar
 import com.forumassist.app.ui.components.TagPill
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 
 @Composable
 fun ThreadDetailScreen(
@@ -98,6 +97,8 @@ fun ThreadDetailScreen(
     // WebView 渲染兜底（绕过 WAF / 动态签名）
     var fallbackUrl by remember { mutableStateOf<String?>(null) }
     var rendering by remember { mutableStateOf(false) }
+    // 抓取超过 5 秒还没结果：给一个「先用网页模式」的出口，别让人干等
+    var slowHint by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val url = "${site.baseUrl}/forum.php?mod=viewthread&tid=${thread.tid}"
@@ -123,31 +124,23 @@ fun ThreadDetailScreen(
             }
         }
 
-        // 2) 网络请求；3.5 秒还没回来就同时拉起站内渲染，谁先到用谁
-        var fresh: ThreadDetail? = null
-        val fetch = launch { fresh = state.detail(site, thread.tid, 1, thread.url) }
-        val timedOut = withTimeoutOrNull(3_500L) { fetch.join() } == null
-        if (timedOut && detail == null && !site.isDemo) {
-            fallbackUrl = thread.url.ifBlank { url }
-            rendering = true
-        }
-        if (timedOut) fetch.join()
-
-        val d = fresh
-        if (d != null) {
-            detail = d
+        // 2) 网络请求。以前 3.5 秒没回来就同时拉起 WebView，
+        //    两个请求抢同一条带宽，反而把 HTTP 拖慢；现在只在抓取失败时才渲染。
+        val fresh = state.detail(site, thread.tid, 1, thread.url)
+        if (fresh != null) {
+            detail = fresh
             error = null
             loading = false
             rendering = false
-            fallbackUrl = null // HTTP 已经拿到，关掉隐藏的 WebView
+            fallbackUrl = null
             state.markRead(thread)
-        } else if (detail == null && !rendering) {
+        } else if (detail == null) {
             val diag = state.lastDetailError.orEmpty()
             error = if (site.isDemo) "演示帖不存在"
             else "正文加载失败。该站点可能需要登录，或限制了外部访问。" +
                 if (diag.isBlank()) "" else "\n\n诊断：\n$diag"
             loading = false
-            if (!site.isDemo) {
+            if (!site.isDemo && state.settings.webRenderFallback) {
                 // 自动用隐藏 WebView 真实渲染一次（可过 WAF / JS 签名）
                 fallbackUrl = thread.url.ifBlank { url }
                 rendering = true
@@ -157,6 +150,14 @@ fun ThreadDetailScreen(
 
     val fav = state.isFav(thread.key)
     val offline = state.isOffline(thread.key)
+
+    LaunchedEffect(loading, rendering, detail) {
+        slowHint = false
+        if ((loading || rendering) && detail == null) {
+            kotlinx.coroutines.delay(5_000L)
+            slowHint = true
+        }
+    }
 
     // 长章节模式：段落是在 IO 线程预先切好的，这里直接用，组合阶段零排版开销
     val splitReady = remember(detail, profile.splitLongPost) {
@@ -276,9 +277,30 @@ fun ThreadDetailScreen(
         }
 
         when {
-            // 已经有缓存内容时先给用户看，别用转圈盖住
-            (loading || rendering) && detail == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            // 正文还没到：先把列表里已有的标题/作者画出来，比一整屏空白转圈体感快得多
+            (loading || rendering) && detail == null -> Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 20.dp)
+            ) {
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = thread.title,
+                    style = MaterialTheme.typography.headlineSmall,
+                    lineHeight = 30.sp,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "${thread.author.ifBlank { "匿名" }}  ·  ${thread.replies} 回复  ·  ${thread.views} 浏览",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.weight(1f))
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
                     CircularProgressIndicator(modifier = Modifier.size(26.dp), strokeWidth = 2.5.dp)
                     if (rendering) {
                         Spacer(Modifier.height(10.dp))
@@ -288,7 +310,17 @@ fun ThreadDetailScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                    if (slowHint) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "网络有点慢，可以先用网页模式看",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        TextButton(onClick = onOpenWeb) { Text("改用网页模式") }
+                    }
                 }
+                Spacer(Modifier.weight(1f))
             }
 
             detail == null -> EmptyState(
@@ -317,11 +349,14 @@ fun ThreadDetailScreen(
                         }
                         itemsIndexed(
                             items = blocks,
-                            key = { i, _ -> "b-${post.pid}-${post.floor}-$i" }
+                            key = { i, _ -> "${post.pid}-$i" },
+                            // 同类型的块共用一套布局节点，长文滚动时复用更彻底
+                            contentType = { _, block -> block::class.java.simpleName }
                         ) { _, block ->
-                            SelectionContainer {
-                                BlockContent(block, site, profile, referer, onOpenUrl)
-                            }
+                            // 不再逐块套 SelectionContainer：长文几百个块时，
+                            // 每个容器都要往 SelectionRegistrar 注册，测量和滚动明显变慢。
+                            // 需要整篇复制用右上角菜单的「复制正文」。
+                            BlockContent(block, site, profile, referer, onOpenUrl)
                         }
                         if (index != d.posts.lastIndex) {
                             item(key = "pd-${post.pid}-${post.floor}") {

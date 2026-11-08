@@ -76,8 +76,41 @@ data class Board(
     val icon: String = ""
 )
 
-/** 版块筛选选项（第一层=排序 orderby，第二层=分类 typeid） */
-data class BoardFilter(val key: String, val name: String)
+/**
+ * 版块筛选选项（第一层=排序 orderby，第二层=分类 typeid）
+ *
+ * query 是这个筛选项对应的真实 URL 参数（如 `filter=heat&orderby=heats`）。
+ * 以前是自己拼 filter/orderby，Discuz 各模板的映射并不一致（点「最新发表」换不来内容），
+ * 现在直接沿用页面上的链接参数，点什么就请求什么。
+ */
+data class BoardFilter(
+    val key: String,
+    val name: String,
+    val query: String = ""
+)
+
+/**
+ * 版块页第一层固定排序（Discuz 通用，与手机版模板一致的顺序）。
+ * 不再从页面解析：各模板给出的文案五花八门（还经常出现重复的「查看」），
+ * 写死这一套既稳定，又保证每个筛选都真的换了请求参数。
+ */
+val DefaultBoardOrders: List<BoardFilter> = listOf(
+    BoardFilter("", "全部", ""),
+    BoardFilter("lastpost", "最新回复", "filter=lastpost&orderby=lastpost"),
+    BoardFilter("dateline", "最新发表", "filter=dateline&orderby=dateline"),
+    BoardFilter("heats", "热门", "filter=heat&orderby=heats"),
+    BoardFilter("digest", "精华", "filter=digest&digest=1")
+)
+
+/** orderby 键 → Discuz 的 filter+orderby 参数（给还在用 orderBy 的旧调用兜底） */
+fun boardOrderQuery(orderBy: String): String = when (orderBy) {
+    "" -> ""
+    "dateline" -> "filter=dateline&orderby=dateline"
+    "heats" -> "filter=heat&orderby=heats"
+    "digest" -> "filter=digest&digest=1"
+    "replies", "views" -> "filter=reply&orderby=replies"
+    else -> "filter=lastpost&orderby=lastpost"
+}
 
 /** 版块列表一页的结果：帖子 + 页面自带的筛选选项 */
 data class ThreadPage(

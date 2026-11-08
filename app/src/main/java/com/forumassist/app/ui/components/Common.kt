@@ -28,6 +28,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -83,21 +84,28 @@ fun ThreadCard(
     siteName: String,
     siteColor: Int,
     newReplies: Int = 0,
+    read: Boolean = false,
     onClick: () -> Unit,
     trailing: @Composable (() -> Unit)? = null
 ) {
+    // 读过的帖子整条压暗：一眼就能跳过，不用回忆「这条点过没」
+    val cs = MaterialTheme.colorScheme
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(18.dp))
             .clickable(onClick = onClick),
-        color = MaterialTheme.colorScheme.surface,
+        color = if (read) cs.surfaceVariant.copy(alpha = 0.30f) else cs.surface,
         shape = RoundedCornerShape(18.dp),
         border = androidx.compose.foundation.BorderStroke(
-            1.dp, MaterialTheme.colorScheme.outlineVariant
+            1.dp, cs.outlineVariant.copy(alpha = if (read) 0.5f else 1f)
         )
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
+        Column(
+            modifier = Modifier
+                .alpha(if (read) 0.55f else 1f)
+                .padding(14.dp)
+        ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
@@ -109,7 +117,7 @@ fun ThreadCard(
                 Text(
                     text = siteName,
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = cs.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false)
@@ -118,7 +126,7 @@ fun ThreadCard(
                     Text(
                         text = "  ·  " + thread.boardName,
                         style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                        color = cs.onSurfaceVariant.copy(alpha = 0.75f),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -127,7 +135,7 @@ fun ThreadCard(
                 Text(
                     text = TimeUtil.prettyOrRaw(thread.lastTime, thread.ts),
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                    color = cs.onSurfaceVariant.copy(alpha = 0.8f)
                 )
             }
 
@@ -136,7 +144,7 @@ fun ThreadCard(
             Text(
                 text = thread.title,
                 style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
+                color = cs.onSurface,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
                 lineHeight = 23.sp
@@ -156,7 +164,7 @@ fun ThreadCard(
                 Text(
                     text = thread.author.ifBlank { "匿名" },
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = cs.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )

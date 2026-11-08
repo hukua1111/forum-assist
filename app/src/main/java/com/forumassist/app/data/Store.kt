@@ -16,6 +16,10 @@ data class Settings(
     val adBlock: Boolean = true,
     /** 是否显示版块页右下角的「发帖」按钮 */
     val showComposeButton: Boolean = true,
+    /** 读过的帖子在列表里变灰 */
+    val readGray: Boolean = true,
+    /** 正文抓取失败时，用隐藏 WebView 再渲染一次（关掉更省流量、更快，但少数帖子只能走网页模式） */
+    val webRenderFallback: Boolean = true,
     val blockedKeywords: List<String> = emptyList(),
     val blockedAuthors: List<String> = emptyList()
 )
@@ -124,6 +128,8 @@ class Store(context: Context) {
                 demoFallback = o.optBoolean("demoFallback", true),
                 adBlock = o.optBoolean("adBlock", true),
                 showComposeButton = o.optBoolean("showComposeButton", true),
+                readGray = o.optBoolean("readGray", true),
+                webRenderFallback = o.optBoolean("webRenderFallback", true),
                 blockedKeywords = o.optJSONArray("blockedKeywords")?.toStringList().orEmpty(),
                 blockedAuthors = o.optJSONArray("blockedAuthors")?.toStringList().orEmpty()
             )
@@ -138,6 +144,8 @@ class Store(context: Context) {
         o.put("demoFallback", s.demoFallback)
         o.put("adBlock", s.adBlock)
         o.put("showComposeButton", s.showComposeButton)
+        o.put("readGray", s.readGray)
+        o.put("webRenderFallback", s.webRenderFallback)
         o.put("blockedKeywords", JSONArray(s.blockedKeywords))
         o.put("blockedAuthors", JSONArray(s.blockedAuthors))
         sp.edit().putString("settings", o.toString()).apply()
@@ -258,12 +266,42 @@ class Store(context: Context) {
     fun cacheSize(): Long {
         var size = 0L
         app.filesDir.walkTopDown().forEach { if (it.isFile) size += it.length() }
+        // Coil 的图片缓存放在 cacheDir 下，之前没算进来：看着只有零点几 MB，其实图片占了大部分
+        File(app.cacheDir, "image_cache").walkTopDown().forEach { if (it.isFile) size += it.length() }
         return size
     }
 
-    fun clearCache() {
-        offlineDir().deleteRecursively()
-        sp.edit().remove("offline_index").remove("history").apply()
+    /**
+     * 清缓存。包含：
+     *  - 离线保存的正文
+     *  - 正文「读速缓存」（dcache，进帖子秒开用的那一份）
+     *  - 首页信息流缓存
+     *  - 图片缓存（磁盘 + 内存）
+     * 收藏、已读记录、登录态不动。
+     */
+    fun clearCache(): Boolean {
+        // 先让 Coil 放手（它持有磁盘缓存的 journal），再删目录，否则可能残留
+        runCatching {
+            val loader = coil.Coil.imageLoader(app)
+            loader.memoryCache?.clear()
+            loader.diskCache?.clear()
+        }
+        var ok = true
+        listOf(
+            offlineDir(),
+            detailCacheDir(),
+            File(app.cacheDir, "image_cache")
+        ).forEach { dir ->
+            if (dir.exists()) ok = dir.deleteRecursively() && ok
+        }
+        sp.edit()
+            .remove("offline_index")
+            .remove("history")
+            .remove("feed_cache")
+            .remove("feed_cache_1")
+            .remove("feed_cache_2")
+            .apply()
+        return ok
     }
 
     // ------------------------------------------------------------ 杂项

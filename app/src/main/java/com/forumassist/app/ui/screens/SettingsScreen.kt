@@ -55,6 +55,9 @@ fun SettingsScreen(state: AppState, onBack: () -> Unit) {
     val s = state.settings
     var editKeywords by remember { mutableStateOf(false) }
     var editAuthors by remember { mutableStateOf(false) }
+    var confirmClear by remember { mutableStateOf(false) }
+    // 清完之后要重新算一次占用，所以放 state 里
+    var cacheMb by remember { mutableStateOf(state.store.cacheSize() / 1024f / 1024f) }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
@@ -204,6 +207,27 @@ fun SettingsScreen(state: AppState, onBack: () -> Unit) {
                     }
                 )
                 SettingRow(
+                    title = "已读置灰",
+                    desc = if (s.readGray) "看过的帖子在列表里变灰" else "所有帖子同样显示",
+                    trailing = {
+                        Switch(
+                            checked = s.readGray,
+                            onCheckedChange = { state.updateSettings(s.copy(readGray = it)) }
+                        )
+                    }
+                )
+                SettingRow(
+                    title = "站内渲染兜底",
+                    desc = if (s.webRenderFallback) "抓取失败时用隐藏浏览器再解析一次（慢，但能打开被拦的帖子）"
+                    else "已关闭，加载更快；打不开的帖子用网页模式看",
+                    trailing = {
+                        Switch(
+                            checked = s.webRenderFallback,
+                            onCheckedChange = { state.updateSettings(s.copy(webRenderFallback = it)) }
+                        )
+                    }
+                )
+                SettingRow(
                     title = "屏蔽关键词",
                     desc = if (s.blockedKeywords.isEmpty()) "未设置" else s.blockedKeywords.joinToString("、"),
                     icon = Icons.Outlined.Block,
@@ -221,9 +245,9 @@ fun SettingsScreen(state: AppState, onBack: () -> Unit) {
             SoftCard(modifier = Modifier.padding(horizontal = 14.dp)) {
                 SettingRow(
                     title = "清理缓存",
-                    desc = "当前占用 ${"%.1f".format(state.store.cacheSize() / 1024f / 1024f)} MB",
+                    desc = "正文、图片、首页列表共占用 ${"%.1f".format(cacheMb)} MB",
                     icon = Icons.Outlined.CleaningServices,
-                    onClick = { state.clearCache() }
+                    onClick = { confirmClear = true }
                 )
             }
 
@@ -231,7 +255,7 @@ fun SettingsScreen(state: AppState, onBack: () -> Unit) {
             SoftCard(modifier = Modifier.padding(horizontal = 14.dp)) {
                 SettingRow(title = "版本", trailing = {
                     Text(
-                        com.forumassist.app.BuildConfig.VERSION_NAME,
+                        "${com.forumassist.app.BuildConfig.VERSION_NAME} (${com.forumassist.app.BuildConfig.VERSION_CODE})",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -253,6 +277,29 @@ fun SettingsScreen(state: AppState, onBack: () -> Unit) {
                 modifier = Modifier.padding(horizontal = 18.dp)
             )
         }
+    }
+
+    if (confirmClear) {
+        AlertDialog(
+            onDismissRequest = { confirmClear = false },
+            title = { Text("清理缓存？") },
+            text = {
+                Text(
+                    "会删掉已保存的正文、图片和首页列表（约 ${"%.1f".format(cacheMb)} MB）。\n" +
+                        "收藏、已读记录和登录状态不受影响。"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    state.clearCache()
+                    cacheMb = state.store.cacheSize() / 1024f / 1024f
+                    confirmClear = false
+                }) { Text("清理") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmClear = false }) { Text("取消") }
+            }
+        )
     }
 
     if (editKeywords) {
