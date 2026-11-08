@@ -275,6 +275,10 @@ class AppState(context: Context) {
             } else online
         }
 
+    /** WebView 渲染兜底：用取回的 DOM 解析详情 */
+    fun detailFromHtml(site: Site, tid: String, html: String, page: Int = 1): ThreadDetail? =
+        client.parseDetailHtml(site, tid, page, html)
+
     suspend fun search(query: String): List<ThreadSummary> = withContext(Dispatchers.IO) {
         val q = query.trim()
         if (q.isEmpty()) return@withContext emptyList()

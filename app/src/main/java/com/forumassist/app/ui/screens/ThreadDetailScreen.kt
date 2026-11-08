@@ -66,6 +66,7 @@ import com.forumassist.app.data.Post
 import com.forumassist.app.data.Site
 import com.forumassist.app.data.ThreadSummary
 import com.forumassist.app.ui.components.EmptyState
+import com.forumassist.app.ui.components.HtmlRenderFallback
 import com.forumassist.app.ui.components.SiteAvatar
 import com.forumassist.app.ui.components.TagPill
 
@@ -84,6 +85,9 @@ fun ThreadDetailScreen(
     var menu by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var loadedPage by remember { mutableStateOf(1) }
+    // WebView 渲染兜底（绕过 WAF / 动态签名）
+    var fallbackUrl by remember { mutableStateOf<String?>(null) }
+    var rendering by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val url = "${site.baseUrl}/forum.php?mod=viewthread&tid=${thread.tid}"
@@ -98,6 +102,11 @@ fun ThreadDetailScreen(
             error = if (site.isDemo) "演示帖不存在"
             else "正文加载失败。该站点可能需要登录，或限制了外部访问。" +
                 if (diag.isBlank()) "" else "\n\n诊断：\n$diag"
+            if (!site.isDemo) {
+                // 自动用隐藏 WebView 真实渲染一次（可过 WAF / JS 签名）
+                fallbackUrl = thread.url.ifBlank { url }
+                rendering = true
+            }
         } else {
             state.markRead(thread)
         }
@@ -171,9 +180,44 @@ fun ThreadDetailScreen(
             }
         }
 
+        // 隐藏的渲染器：加载真实页面并取回 DOM
+        fallbackUrl?.let { fu ->
+            HtmlRenderFallback(
+                url = fu,
+                adBlock = state.settings.adBlock,
+                onHtml = { html ->
+                    val parsed = state.detailFromHtml(site, thread.tid, html)
+                    if (parsed != null && parsed.posts.isNotEmpty()) {
+                        detail = parsed
+                        error = null
+                        state.markRead(thread)
+                    } else {
+                        error = (error ?: "正文加载失败") + "\n\n已尝试站内渲染，仍未能解析出正文。"
+                    }
+                    rendering = false
+                    fallbackUrl = null
+                },
+                onFailed = {
+                    error = (error ?: "正文加载失败") + "\n\n站内渲染失败，可改用网页模式阅读。"
+                    rendering = false
+                    fallbackUrl = null
+                }
+            )
+        }
+
         when {
-            loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(modifier = Modifier.size(26.dp), strokeWidth = 2.5.dp)
+            loading || rendering -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator(modifier = Modifier.size(26.dp), strokeWidth = 2.5.dp)
+                    if (rendering) {
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            "正在用站内渲染加载正文…",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
 
             detail == null -> EmptyState(

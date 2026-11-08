@@ -13,6 +13,7 @@ data class Settings(
     val accent: Int = 0xFF4C6FFF.toInt(),
     val fontScale: Float = 1.0f,
     val demoFallback: Boolean = true,
+    val adBlock: Boolean = true,
     val blockedKeywords: List<String> = emptyList(),
     val blockedAuthors: List<String> = emptyList()
 )
@@ -95,6 +96,7 @@ class Store(context: Context) {
                 accent = o.optInt("accent", 0xFF4C6FFF.toInt()),
                 fontScale = o.optDouble("fontScale", 1.0).toFloat(),
                 demoFallback = o.optBoolean("demoFallback", true),
+                adBlock = o.optBoolean("adBlock", true),
                 blockedKeywords = o.optJSONArray("blockedKeywords")?.toStringList().orEmpty(),
                 blockedAuthors = o.optJSONArray("blockedAuthors")?.toStringList().orEmpty()
             )
@@ -107,6 +109,7 @@ class Store(context: Context) {
         o.put("accent", s.accent)
         o.put("fontScale", s.fontScale.toDouble())
         o.put("demoFallback", s.demoFallback)
+        o.put("adBlock", s.adBlock)
         o.put("blockedKeywords", JSONArray(s.blockedKeywords))
         o.put("blockedAuthors", JSONArray(s.blockedAuthors))
         sp.edit().putString("settings", o.toString()).apply()

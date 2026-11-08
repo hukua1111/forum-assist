@@ -187,6 +187,25 @@ class Http(private val store: Store) {
         clearWebViewCookiesFor(host)
     }
 
+    /**
+     * 渲染兜底前确保 WebView 有登录态：仅当 WebView 缺少 auth Cookie 时，
+     * 才把原生的 *_auth / *_saltkey 注入（不动 sid，避免会话错乱）。
+     */
+    fun ensureWebSession(pageUrl: String) {
+        val httpUrl = pageUrl.toHttpUrlOrNull() ?: return
+        val cm = android.webkit.CookieManager.getInstance()
+        val existing = runCatching { cm.getCookie(pageUrl) }.getOrNull().orEmpty()
+        if (existing.contains("_auth")) return
+        store.cookies()
+            .filter { it.host == httpUrl.host && (it.name.endsWith("_auth") || it.name.endsWith("_saltkey")) }
+            .forEach { c ->
+                runCatching {
+                    cm.setCookie(pageUrl, "${c.name}=${c.value}; Path=/; Domain=${httpUrl.host}")
+                }
+            }
+        cm.flush()
+    }
+
     /** 只清 WebView 里该主机的 Cookie（不动原生登录态） */
     fun clearWebViewCookiesFor(host: String) {
         val cm = android.webkit.CookieManager.getInstance()

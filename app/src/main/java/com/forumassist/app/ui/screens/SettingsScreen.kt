@@ -183,6 +183,17 @@ fun SettingsScreen(state: AppState, onBack: () -> Unit) {
                     }
                 )
                 SettingRow(
+                    title = "广告屏蔽",
+                    desc = "拦截常见广告/统计请求，并隐藏网页模式里的广告位",
+                    icon = Icons.Outlined.CleaningServices,
+                    trailing = {
+                        Switch(
+                            checked = s.adBlock,
+                            onCheckedChange = { state.updateSettings(s.copy(adBlock = it)) }
+                        )
+                    }
+                )
+                SettingRow(
                     title = "屏蔽关键词",
                     desc = if (s.blockedKeywords.isEmpty()) "未设置" else s.blockedKeywords.joinToString("、"),
                     icon = Icons.Outlined.Block,

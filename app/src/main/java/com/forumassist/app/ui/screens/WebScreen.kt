@@ -6,6 +6,8 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.view.ViewGroup
 import android.webkit.CookieManager
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -41,6 +43,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.forumassist.app.data.AdBlock
+import java.io.ByteArrayInputStream
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -179,7 +183,22 @@ fun WebScreen(
                                 if (!t.isNullOrBlank()) pageTitle = t
                             }
                         }
+                        val adBlockOn = com.forumassist.app.App.state.settings.adBlock
                         webViewClient = object : WebViewClient() {
+                            override fun shouldInterceptRequest(
+                                view: WebView?,
+                                request: WebResourceRequest?
+                            ): WebResourceResponse? {
+                                val u = request?.url?.toString().orEmpty()
+                                if (adBlockOn && AdBlock.shouldBlock(u)) {
+                                    // 直接返回空响应，等价于广告屏蔽插件的网络层拦截
+                                    return WebResourceResponse(
+                                        "text/plain", "utf-8", ByteArrayInputStream(ByteArray(0))
+                                    )
+                                }
+                                return super.shouldInterceptRequest(view, request)
+                            }
+
                             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                                 loading = true
                             }
@@ -196,6 +215,10 @@ fun WebScreen(
                                     if (ok && !hadLogin) {
                                         com.forumassist.app.App.state.loadFeed(reset = true)
                                     }
+                                }
+                                // 隐藏页面里的广告位（与网络层拦截配合）
+                                if (adBlockOn) {
+                                    runCatching { view?.evaluateJavascript(AdBlock.COSMETIC_JS, null) }
                                 }
                             }
                         }

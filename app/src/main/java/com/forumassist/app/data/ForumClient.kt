@@ -171,6 +171,10 @@ class ForumClient(private val http: Http) {
             null
         }
 
+    /** 用已渲染好的 HTML（例如 WebView 取回的 DOM）解析详情 */
+    fun parseDetailHtml(site: Site, tid: String, page: Int, html: String): ThreadDetail? =
+        runCatching { parseDetail(html, site, tid, page) }.getOrNull()
+
     /**
      * 是否是「请先登录」页。
      * 基准：页面里有没有可解析的正文节点；只有完全没有正文、且明显是登录页时才判定为登录墙。
