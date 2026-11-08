@@ -22,8 +22,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Forum
+import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -58,12 +60,15 @@ fun BoardsScreen(
     onOpenWeb: () -> Unit,
     onSearch: () -> Unit
 ) {
-    var boards by remember { mutableStateOf<List<Board>>(emptyList()) }
+    var allBoards by remember { mutableStateOf<List<Board>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
+    val current = state.site(site.id) ?: site
+    val boards = allBoards.filterNot { it.fid in current.blockedFids }
+    val hiddenBoards = allBoards.filter { it.fid in current.blockedFids }
 
     LaunchedEffect(site.id) {
         loading = true
-        boards = state.boards(site)
+        allBoards = state.allBoards(site)
         loading = false
     }
 
@@ -138,75 +143,123 @@ fun BoardsScreen(
                         modifier = Modifier.padding(start = 4.dp, bottom = 2.dp)
                     )
                 }
+
                 items(boards, key = { it.fid }) { board ->
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(16.dp))
-                            .clickable { onOpenBoard(board) },
-                        shape = RoundedCornerShape(16.dp),
-                        color = MaterialTheme.colorScheme.surface,
-                        border = androidx.compose.foundation.BorderStroke(
-                            1.dp, MaterialTheme.colorScheme.outlineVariant
+                    BoardRow(
+                        board = board,
+                        siteColor = site.color,
+                        blocked = false,
+                        onOpen = { onOpenBoard(board) },
+                        onToggleBlock = { state.toggleBoardBlocked(current, board.fid) }
+                    )
+                }
+
+                if (hiddenBoards.isNotEmpty()) {
+                    item {
+                        Text(
+                            text = "已屏蔽 · ${hiddenBoards.size}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 4.dp, top = 10.dp, bottom = 2.dp)
                         )
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(13.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(38.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(Color(site.color).copy(alpha = 0.10f)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    Icons.Rounded.Forum, null,
-                                    tint = Color(site.color),
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                            Spacer(Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = board.name,
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                if (board.desc.isNotBlank()) {
-                                    Text(
-                                        text = board.desc,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                            }
-                            if (board.todayPosts > 0) {
-                                Box(
-                                    modifier = Modifier
-                                        .clip(CircleShape)
-                                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                                ) {
-                                    Text(
-                                        text = "今日 ${board.todayPosts}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
-                                    )
-                                }
-                            }
-                            Spacer(Modifier.width(4.dp))
-                            Icon(
-                                Icons.Rounded.ChevronRight, null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
+                    }
+                    items(hiddenBoards, key = { "hidden_${it.fid}" }) { board ->
+                        BoardRow(
+                            board = board,
+                            siteColor = site.color,
+                            blocked = true,
+                            onOpen = {},
+                            onToggleBlock = { state.toggleBoardBlocked(current, board.fid) }
+                        )
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BoardRow(
+    board: Board,
+    siteColor: Int,
+    blocked: Boolean,
+    onOpen: () -> Unit,
+    onToggleBlock: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(enabled = !blocked) { onOpen() },
+        shape = RoundedCornerShape(16.dp),
+        color = if (blocked) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+        else MaterialTheme.colorScheme.surface,
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp, MaterialTheme.colorScheme.outlineVariant
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(13.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color(siteColor).copy(alpha = if (blocked) 0.06f else 0.10f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Rounded.Forum, null,
+                    tint = Color(siteColor).copy(alpha = if (blocked) 0.5f else 1f),
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = board.name,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (blocked) MaterialTheme.colorScheme.onSurfaceVariant
+                    else MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = if (blocked) "已屏蔽，不显示在列表中" else board.desc,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            if (!blocked && board.todayPosts > 0) {
+                Box(
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    Text(
+                        text = "今日 ${board.todayPosts}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                    )
+                }
+            }
+            IconButton(onClick = onToggleBlock, modifier = Modifier.size(32.dp)) {
+                Icon(
+                    imageVector = if (blocked) Icons.Rounded.Visibility else Icons.Outlined.VisibilityOff,
+                    contentDescription = if (blocked) "恢复该版块" else "屏蔽该版块",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            if (!blocked) {
+                Icon(
+                    Icons.Rounded.ChevronRight, null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.size(18.dp)
+                )
             }
         }
     }

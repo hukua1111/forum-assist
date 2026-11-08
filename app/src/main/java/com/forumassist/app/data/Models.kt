@@ -21,7 +21,9 @@ data class Site(
     val username: String? = null,
     val cookie: String? = null,
     val color: Int = DEFAULT_COLOR,
-    val isDemo: Boolean = false
+    val isDemo: Boolean = false,
+    /** 被屏蔽的版块 fid（多为广告版块），不展示、不进信息流 */
+    val blockedFids: List<String> = emptyList()
 ) {
     val host: String
         get() = baseUrl.removePrefix("https://").removePrefix("http://").trimEnd('/')
@@ -43,6 +45,7 @@ fun Site.toJson(): JSONObject = JSONObject().apply {
     put("cookie", cookie ?: "")
     put("color", color)
     put("isDemo", isDemo)
+    put("blockedFids", JSONArray(blockedFids))
 }
 
 fun JSONObject.toSite(): Site = Site(
@@ -54,7 +57,10 @@ fun JSONObject.toSite(): Site = Site(
     username = optString("username", "").ifBlank { null },
     cookie = optString("cookie", "").ifBlank { null },
     color = optInt("color", Site.DEFAULT_COLOR),
-    isDemo = optBoolean("isDemo", false)
+    isDemo = optBoolean("isDemo", false),
+    blockedFids = optJSONArray("blockedFids")?.let { arr ->
+        (0 until arr.length()).mapNotNull { arr.optString(it, "").ifBlank { null } }
+    }.orEmpty()
 )
 
 data class Board(

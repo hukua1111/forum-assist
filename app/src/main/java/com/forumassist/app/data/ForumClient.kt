@@ -49,6 +49,66 @@ class ForumClient(private val http: Http) {
             parseThreads(html, site)
         }
 
+    // ------------------------------------------------- 首页门户四格（最新主题/最新回复/热帖/精华）
+
+    /**
+     * 抓站点首页自带门户区块（Discuz 首页四格/DIY）。
+     * 这类站点往往限制 guide 接口，但首页区块是公开可见的，且自带作者/时间/查看/回复。
+     * view: newthread / newreply / hot / digest
+     */
+    suspend fun portal(site: Site, view: String): List<ThreadSummary> = withContext(Dispatchers.IO) {
+        val html = http.get(site.baseUrl.trimEnd('/') + "/") ?: return@withContext emptyList()
+        parsePortal(html, site, view)
+    }
+
+    fun parsePortal(html: String, site: Site, view: String): List<ThreadSummary> {
+        val doc = Jsoup.parse(html, site.baseUrl)
+        val boxClass = when (view) {
+            "newreply" -> "replaybox"
+            "hot" -> "hottiebox"
+            "digest" -> "goodtiebox"
+            else -> "subjectbox"
+        }
+        val box = doc.selectFirst(".$boxClass")
+            ?: doc.selectFirst("h4:contains(最新主题), h4:contains(热帖), h4:contains(精华)")?.parent()
+            ?: return emptyList()
+
+        val out = LinkedHashMap<String, ThreadSummary>()
+        for (a in box.select("ul.category_newlist li a, li a")) {
+            val href = a.attr("href")
+            val tid = tidOf(href) ?: continue
+            if (out.containsKey(tid)) continue
+
+            // tip 属性: 标题: <strong>xx</strong><br/>作者: 某某 (13 小时前)<br/>查看/回复: 2201/6
+            val tip = Jsoup.parse(a.attr("tip").replace("<br/>", "\n").replace("<br>", "\n")).text()
+            val title = Regex("标题[:：]\\s*(.*?)\\s*作者[:：]", RegexOption.DOT_MATCHES_ALL)
+                .find(tip)?.groupValues?.get(1)?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: a.text().trim().ifBlank { a.attr("title").trim() }
+            if (title.length < 2) continue
+
+            val author = Regex("作者[:：]\\s*(.*?)\\s*[（(]").find(tip)?.groupValues?.get(1)?.trim().orEmpty()
+            val timeRaw = Regex("[（(]\\s*([^）)]{1,20})\\s*[）)]").find(tip)?.groupValues?.get(1)?.trim().orEmpty()
+            val counts = Regex("查看/回复[:：]\\s*(\\d+)\\s*/\\s*(\\d+)").find(tip)
+            val views = counts?.groupValues?.get(1)?.toIntOrNull() ?: 0
+            val replies = counts?.groupValues?.get(2)?.toIntOrNull() ?: 0
+
+            out[tid] = ThreadSummary(
+                siteId = site.id,
+                tid = tid,
+                fid = Regex("fid=(\\d+)").find(href)?.groupValues?.get(1) ?: "",
+                title = title,
+                author = author,
+                replies = replies,
+                views = views,
+                lastTime = timeRaw,
+                ts = TimeUtil.parse(timeRaw),
+                url = runCatching { a.absUrl("href") }.getOrDefault("").ifBlank { href }
+            )
+        }
+        return out.values.toList()
+    }
+
     suspend fun threads(
         site: Site,
         fid: String,

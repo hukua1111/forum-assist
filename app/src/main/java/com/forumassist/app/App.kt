@@ -17,4 +17,9 @@ object App {
     }
 
     fun store(context: Context): Store = Store(context.applicationContext)
+
+    /** 回到前台时的按需刷新（未初始化则忽略） */
+    fun maybeRefresh() {
+        if (::state.isInitialized) state.maybeAutoRefresh()
+    }
 }

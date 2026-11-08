@@ -101,6 +101,7 @@ class AppState(context: Context) {
     private fun buildView(): String = when (feedTab) {
         1 -> "newreply"
         2 -> "hot"
+        3 -> "digest"
         else -> "newthread"
     }
 
@@ -137,7 +138,14 @@ class AppState(context: Context) {
                 enabled.map { site ->
                     async(Dispatchers.IO) {
                         val list = try {
-                            if (site.isDemo) Demo.threads() else client.guide(site, view, page)
+                            if (site.isDemo) {
+                                Demo.threads()
+                            } else if (page <= 1) {
+                                // 优先读站点首页自带的门户四格（最新主题/最新回复/热帖/精华）
+                                client.portal(site, view).ifEmpty { client.guide(site, view, page) }
+                            } else {
+                                client.guide(site, view, page)
+                            }
                         } catch (e: Exception) {
                             emptyList()
                         }
@@ -147,8 +155,10 @@ class AppState(context: Context) {
                 }.awaitAll()
             }.flatten()
 
+            val blockedFidSet = enabled.flatMap { it.blockedFids }.toSet()
             val merged = collected
                 .filterNot { blocked(it) }
+                .filterNot { it.fid.isNotEmpty() && it.fid in blockedFidSet }
                 .distinctBy { it.key }
                 .sortedByDescending { it.ts }
 
@@ -244,12 +254,32 @@ class AppState(context: Context) {
         return palette[index % palette.size].toInt()
     }
 
-    suspend fun boards(site: Site): List<Board> = withContext(Dispatchers.IO) {
+    suspend fun allBoards(site: Site): List<Board> = withContext(Dispatchers.IO) {
         if (site.isDemo) return@withContext Demo.boards()
-        boardCache[site.id]?.let { return@withContext it }
-        val list = client.boards(site)
-        if (list.isNotEmpty()) boardCache[site.id] = list
-        list
+        val cached = boardCache[site.id]
+        if (cached != null) return@withContext cached
+        client.boards(site).also { if (it.isNotEmpty()) boardCache[site.id] = it }
+    }
+
+    suspend fun boards(site: Site): List<Board> = withContext(Dispatchers.IO) {
+        // 屏蔽的版块（多为广告版块）不进入常规列表
+        allBoards(site).filterNot { it.fid in site.blockedFids }
+    }
+
+    /** 屏蔽 / 恢复版块 */
+    fun toggleBoardBlocked(site: Site, fid: String) {
+        val blocked = site.blockedFids.toMutableList()
+        if (fid in blocked) blocked.remove(fid) else blocked.add(fid)
+        updateSite(site.copy(blockedFids = blocked))
+        loadFeed(reset = true)
+        notify(if (fid in blocked) "已屏蔽该版块" else "已恢复该版块")
+    }
+
+    /** 进入首页/回前台时按需自动刷新（默认 3 分钟内不重复刷新） */
+    fun maybeAutoRefresh(minIntervalMs: Long = 3 * 60 * 1000L) {
+        if (feedLoading || feedRefreshing) return
+        if (System.currentTimeMillis() - store.lastFeedRefresh < minIntervalMs) return
+        loadFeed(reset = true)
     }
 
     suspend fun threads(site: Site, fid: String, page: Int, orderBy: String = "lastpost"):
