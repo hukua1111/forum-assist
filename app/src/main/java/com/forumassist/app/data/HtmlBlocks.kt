@@ -13,18 +13,30 @@ object HtmlBlocks {
     private val blockTags = setOf(
         "p", "div", "br", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "table"
     )
+    private val horizontalWhitespace = Regex("[ \\t\\x0B\\f\\r]+")
+    private val lineWhitespace = Regex(" *\\n *")
+    private val excessLines = Regex("\\n{3,}")
+    private val imageSrcAttributes = arrayOf("zoomfile", "file", "data-src", "data-original", "src")
 
     fun parse(html: String, baseUrl: String = ""): List<Block> {
         if (html.isBlank()) return emptyList()
         val doc = runCatching { Jsoup.parseBodyFragment(html) }.getOrNull() ?: return emptyList()
+        return parse(doc.body(), baseUrl)
+    }
+
+    /**
+     * 直接遍历详情页已经解析好的正文节点。
+     * 避免 body.html() → Jsoup.parseBodyFragment() 这道重复的序列化和二次解析。
+     */
+    fun parse(body: Element, baseUrl: String = ""): List<Block> {
         val out = mutableListOf<Block>()
         val buffer = StringBuilder()
 
         fun flush() {
             val text = buffer.toString()
-                .replace(Regex("[ \\t\\x0B\\f\\r]+"), " ")
-                .replace(Regex(" *\\n *"), "\n")
-                .replace(Regex("\\n{3,}"), "\n\n")
+                .replace(horizontalWhitespace, " ")
+                .replace(lineWhitespace, "\n")
+                .replace(excessLines, "\n\n")
                 .trim()
             if (text.isNotEmpty()) out.add(Block.Text(text))
             buffer.setLength(0)
@@ -44,12 +56,12 @@ object HtmlBlocks {
             when (node) {
                 is TextNode -> buffer.append(node.text())
                 is Element -> {
-                    val tag = node.tagName().lowercase()
+                    val tag = node.normalName()
                     when {
                         tag == "img" -> {
                             // Discuz 的懒加载图：src 是占位/缩略，真实地址在 zoomfile / file
                             var raw = ""
-                            for (key in listOf("zoomfile", "file", "data-src", "data-original", "src")) {
+                            for (key in imageSrcAttributes) {
                                 val v = node.attr(key).trim()
                                 if (v.isNotBlank() && !v.contains("none.gif")) { raw = v; break }
                             }
@@ -82,7 +94,7 @@ object HtmlBlocks {
             }
         }
 
-        doc.body().childNodes().forEach { walk(it) }
+        body.childNodes().forEach { walk(it) }
         flush()
         return out
     }

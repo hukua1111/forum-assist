@@ -11,8 +11,8 @@ android {
         applicationId = "com.forumassist.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 24
-        versionName = "1.7.7"
+        versionCode = 25
+        versionName = "1.8.0"
 
         // 只打包 arm64-v8a（v8a），减小体积
         ndk {

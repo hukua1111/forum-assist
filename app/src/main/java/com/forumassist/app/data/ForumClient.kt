@@ -938,27 +938,33 @@ class ForumClient(private val http: Http) {
             notes?.add("· 请求失败 " + url.substringAfter("://").take(60))
             return null
         }
-        if (isLoginWall(html)) {
+        // 每个入口只解析一次整页。旧逻辑在登录检测、正文提取、失败诊断里各 parse 一次，
+        // 多入口并发时这些重复 Jsoup 解析会抢满 CPU，反而拖慢已经拿到正文的入口。
+        val doc = runCatching { Jsoup.parse(html, site.baseUrl) }.getOrNull()
+        if (doc == null) {
+            notes?.add("· HTML 解析失败 " + url.substringAfter("://").take(60))
+            return null
+        }
+        val parsed = parseDetail(doc, html, site, tid, page)
+        if (parsed != null && parsed.posts.isNotEmpty()) return parsed
+        if (isLoginWall(doc, html)) {
             notes?.add("· 登录页 " + url.substringAfter("://").take(60))
             return null
         }
-        val parsed = parseDetail(html, site, tid, page)
-        if (parsed != null && parsed.posts.isNotEmpty()) return parsed
-        val reason = stubReason(html)
+        val reason = stubReason(doc, html)
         notes?.add("· " + url.substringAfter("://").take(60) + " → " + reason)
         AppLog.d("正文", "tid=$tid 入口无正文：$reason")
         return null
     }
 
     /** 抓不到正文时，把「这个页面到底是什么」记下来（权限不足/审核中/请先登录都是小提示页） */
-    private fun stubReason(html: String): String {
-        val doc = runCatching { Jsoup.parse(html) }.getOrNull()
-        val msg = doc?.selectFirst("#messagetext, .alert_info, .alert_error, .alert_error_msg, div.message")
+    private fun stubReason(doc: Document, html: String): String {
+        val msg = doc.selectFirst("#messagetext, .alert_info, .alert_error, .alert_error_msg, div.message")
             ?.text()?.replace(Regex("\\s+"), " ")?.trim()?.take(70).orEmpty()
-        val title = doc?.title()?.trim()?.take(20).orEmpty()
+        val title = doc.title().trim().take(20)
         if (msg.isNotBlank()) return "提示页「$title」$msg"
         // 连提示语都没有时，把正文前几十个字一起记下来：下次能直接看出这 2~3 KB 到底是个什么页
-        val snippet = doc?.body()?.text()?.replace(Regex("\\s+"), " ")?.trim()?.take(60).orEmpty()
+        val snippet = doc.body()?.text()?.replace(Regex("\\s+"), " ")?.trim()?.take(60).orEmpty()
         return "无正文 ${html.length}B 标题「$title」" + if (snippet.isBlank()) "" else " 内容「$snippet」"
     }
 
@@ -967,19 +973,26 @@ class ForumClient(private val http: Http) {
      * 基准：页面里有没有可解析的正文节点；只有完全没有正文、且明显是登录页时才判定为登录墙。
      * （早期版本用 post_/t_f 特征判断，误把使用 div.message 模板的站点当成登录页）
      */
-    private fun isLoginWall(html: String): Boolean {
+    private fun isLoginWall(doc: Document, html: String): Boolean {
         if (html.contains("class=\"message\"") || html.contains("postmessage") ||
             html.contains("class=\"t_f\"") || html.contains("id=\"post_")
         ) return false
-        val doc = Jsoup.parse(html)
         if (doc.select(BODY_SELECTOR).any { it.text().isNotBlank() }) return false
         val title = doc.title()
         return title.contains("登录") || title.contains("提示") ||
             html.contains("member.php?mod=logging")
     }
 
-    private fun parseDetail(html: String, site: Site, tid: String, page: Int): ThreadDetail? {
-        val doc = Jsoup.parse(html, site.baseUrl)
+    private fun parseDetail(html: String, site: Site, tid: String, page: Int): ThreadDetail? =
+        parseDetail(Jsoup.parse(html, site.baseUrl), html, site, tid, page)
+
+    private fun parseDetail(
+        doc: Document,
+        html: String,
+        site: Site,
+        tid: String,
+        page: Int
+    ): ThreadDetail? {
         // Discuz 的「提示信息」模板（权限不足 / 需购买 / 请先登录 / 审核中）里也有 div.message，
         // 长得很像正文；没有 post_ 容器时直接判负，别把提示语当成帖子内容渲染出来。
         if (doc.select("div[id^=post_]").isEmpty() &&
@@ -1011,13 +1024,12 @@ class ForumClient(private val http: Http) {
 
     private fun parsePosts(doc: Document, site: Site): List<Post> {
         // 方案 A：标准/桌面模板 div[id=post_xxx]（含内嵌正文节点）
-        val nodes = doc.select("div[id^=post_]").toList().filter {
-            it.selectFirst(BODY_SELECTOR) != null
+        val nodes = doc.select("div[id^=post_]").mapNotNull { holder ->
+            holder.selectFirst(BODY_SELECTOR)?.let { holder to it }
         }
         if (nodes.isNotEmpty()) {
-            return nodes.mapIndexed { index, el ->
-                val body = el.selectFirst(BODY_SELECTOR) ?: el
-                buildPost(el, body, index, extracted = true, site = site)
+            return nodes.mapIndexed { index, pair ->
+                buildPost(pair.first, pair.second, index, extracted = true, site = site)
             }
         }
 
@@ -1079,7 +1091,8 @@ class ForumClient(private val http: Http) {
         var isOp = floor == 1
         if (!isOp && index == 0) isOp = true
 
-        val blocks = HtmlBlocks.parse(html, baseUrl).toMutableList()
+        // 整页已经由 Jsoup 解析过，直接遍历正文节点；不再把 body.html() 再解析一遍。
+        val blocks = HtmlBlocks.parse(body, baseUrl).toMutableList()
         // 附件不在正文节点里，而在同楼层的 .pattl 里（付费附件链接是 attachpay）。
         // 尚香书苑的模板把附件放在 t_fsz 里、可能包一层 ignore_js_op，用增强解析；
         // 其他站点继续走原来的 dl.tattl 逻辑，行为完全不变。

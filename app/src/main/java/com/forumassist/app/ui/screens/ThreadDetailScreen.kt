@@ -177,11 +177,14 @@ fun ThreadDetailScreen(
         if (!site.isDemo && state.settings.webRenderFallback && detail == null) {
             launch {
                 // 已知这个站点的详情页只能靠 JS 渲染，就别再让 HTTP 抢跑了
-                if (!state.isRenderFirst(site.id)) kotlinx.coroutines.delay(500L)
+                // 列表点击时 HTTP 已预取，导航本身已经给了它几百毫秒先手；
+                // 增强站点只再错开 100ms，不再让低速率的 HTTP 探测白等半秒。
+                val renderDelay = if (profile.parallelDetail) 100L else 500L
+                if (!state.isRenderFirst(site.id)) kotlinx.coroutines.delay(renderDelay)
                 if (detail == null && fallbackUrl == null) {
                     com.forumassist.app.data.AppLog.d(
                         "正文",
-                        "tid=${thread.tid} 站内渲染起跑（${if (state.isRenderFirst(site.id)) "直连" else "500ms"}）"
+                        "tid=${thread.tid} 站内渲染起跑（${if (state.isRenderFirst(site.id)) "直连" else "${renderDelay}ms"}）"
                     )
                     fallbackUrl = thread.url.ifBlank { url }
                     rendering = true

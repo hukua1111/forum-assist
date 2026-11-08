@@ -48,6 +48,29 @@ fun HtmlRenderFallback(
                 CookieManager.getInstance().setAcceptCookie(true)
                 CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
 
+                var tries = 0
+                val evaluating = AtomicBoolean(false)
+
+                /** 从导航开始就轮询正文节点；readyState=loading 也允许提取。 */
+                fun attemptFastExtract() {
+                    if (!fastExtract || done.get() || tries >= 40) return
+                    if (!evaluating.compareAndSet(false, true)) return
+                    tries++
+                    evaluateJavascript(DOM_IF_READY_JS) { raw ->
+                        evaluating.set(false)
+                        val html = decodeJsString(raw)
+                        if (!done.get() && html != null && html.length > 800) {
+                            if (done.compareAndSet(false, true)) {
+                                // 只要 DOM，正文已到手就停掉剩余图片/统计脚本，释放网络和 CPU。
+                                stopLoading()
+                                onHtml(html)
+                            }
+                        } else if (!done.get() && tries < 40) {
+                            postDelayed({ attemptFastExtract() }, 120)
+                        }
+                    }
+                }
+
                 webViewClient = object : WebViewClient() {
                     override fun shouldInterceptRequest(
                         view: WebView?,
@@ -62,27 +85,10 @@ fun HtmlRenderFallback(
                         return super.shouldInterceptRequest(view, request)
                     }
 
-                    /** 首屏可见即尝试取 DOM（仅 fastExtract 模式），拿不到就退避重试几次 */
+                    /** 首屏可见时立刻补试一次；常规轮询在 loadUrl 后就已经开始。 */
                     override fun onPageCommitVisible(view: WebView?, u: String?) {
                         super.onPageCommitVisible(view, u)
-                        if (!fastExtract) return
-                        val wv = view ?: return
-                        var tries = 0
-                        fun attempt(): Unit {
-                            if (done.get() || tries >= 8) return
-                            tries++
-                            wv.evaluateJavascript(DOM_IF_READY_JS) { raw ->
-                                val html = decodeJsString(raw)
-                                if (!done.get() && html != null && html.length > 800) {
-                                    done.set(true)
-                                    onHtml(html)
-                                } else if (!done.get()) {
-                                    wv.postDelayed({ attempt() }, 320)
-                                }
-                            }
-                        }
-                        // 正文节点一出现就取，不用等图片/统计脚本跑完
-                        wv.postDelayed({ attempt() }, 120)
+                        if (fastExtract) view?.post { attemptFastExtract() }
                     }
 
                     override fun onPageFinished(view: WebView?, u: String?) {
@@ -91,10 +97,11 @@ fun HtmlRenderFallback(
                             if (done.get()) return@evaluateJavascript
                             val html = decodeJsString(raw)
                             if (html != null && html.length > 800) {
-                                done.set(true)
-                                onHtml(html)
-                            } else {
-                                done.set(true)
+                                if (done.compareAndSet(false, true)) {
+                                    view.stopLoading()
+                                    onHtml(html)
+                                }
+                            } else if (done.compareAndSet(false, true)) {
                                 onFailed()
                             }
                         }
@@ -112,6 +119,8 @@ fun HtmlRenderFallback(
                 }
                 runCatching { com.forumassist.app.App.state.http.ensureWebSession(url) }
                 loadUrl(url)
+                // 不等 onPageCommitVisible：导航后 60ms 就开始找正文，找到即返回。
+                if (fastExtract) postDelayed({ attemptFastExtract() }, 60)
             }
         }
     )
@@ -120,11 +129,10 @@ fun HtmlRenderFallback(
 private const val DOM_JS =
     "(function(){try{return document.documentElement.outerHTML||''}catch(e){return ''}})()"
 
-/** DOM 已可交互且正文节点已出现就返回，不再死等 readyState=complete（那要等所有图片/脚本） */
+/** 正文节点已出现就返回；不等 readyState，也不等首屏可见或整页加载完成。 */
 private const val DOM_IF_READY_JS =
     "(function(){try{" +
-        "if(document.readyState==='loading')return '';" +
-        "var b=document.querySelector('td.t_f, div.t_f, div.message, div.postmessage, [id^=postmessage_]');" +
+        "var b=document.querySelector('td.t_f, div.t_f, div.message, div.postmessage, [id^=postmessage_], .article-content, .post-content, .thread-content, .post_message');" +
         "if(!b||b.textContent.trim().length<2)return '';" +
         "return document.documentElement.outerHTML||''}catch(e){return ''}})()"
 
