@@ -105,8 +105,20 @@ class Http(store: Store) {
         }
     }.getOrNull()
 
-    fun post(url: String, form: Map<String, String>, referer: String? = null): String? = runCatching {
-        val body = form.entries.joinToString("&") {
+    /** 下载二进制内容（如验证码图片） */
+    fun getBytes(url: String, referer: String? = null): ByteArray? = runCatching {
+        val builder = Request.Builder().url(url).get()
+            .header("User-Agent", ua)
+            .header("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+            .header("Accept-Language", "zh-CN,zh;q=0.9")
+        referer?.let { builder.header("Referer", it) }
+        client.newCall(builder.build()).execute().use { resp ->
+            if (!resp.isSuccessful) return@use null
+            resp.body?.bytes()
+        }
+    }.getOrNull()
+
+    fun post(url: String, form: Map<String, String>, referer: String? = null): String? = runCatching {        val body = form.entries.joinToString("&") {
             "${java.net.URLEncoder.encode(it.key, "UTF-8")}=${java.net.URLEncoder.encode(it.value, "UTF-8")}"
         }.toRequestBody("application/x-www-form-urlencoded; charset=UTF-8".toMediaType())
         val builder = Request.Builder().url(url).post(body)

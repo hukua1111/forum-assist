@@ -285,16 +285,31 @@ class AppState(context: Context) {
 
     // ------------------------------------------------------------ 登录 / 发帖
 
-    fun login(site: Site, username: String, password: String, onDone: (Result<String>) -> Unit) {
+    fun login(
+        site: Site,
+        username: String,
+        password: String,
+        captchaHash: String? = null,
+        captchaCode: String? = null,
+        onDone: (Result<String>) -> Unit
+    ) {
         scope.launch {
             val res = if (site.isDemo) {
                 if (username.isNotBlank() && password.isNotBlank()) Result.success(username)
                 else Result.failure(Exception("演示站点随便填个账号密码即可"))
-            } else client.login(site, username, password)
+            } else client.login(site, username, password, captchaHash, captchaCode)
             res.onSuccess {
                 updateSite(site.copy(username = username))
                 notify("已登录：$username")
             }.onFailure { notify(it.message ?: "登录失败") }
+            onDone(res)
+        }
+    }
+
+    /** 取登录验证码图片（站点开启验证码时） */
+    fun fetchLoginCaptcha(site: Site, onDone: (ForumClient.LoginCaptcha?) -> Unit) {
+        scope.launch {
+            val res = if (site.isDemo) null else client.loginCaptcha(site)
             onDone(res)
         }
     }

@@ -1,5 +1,8 @@
 package com.forumassist.app.ui.screens
 
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,17 +12,18 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.VerifiedUser
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -30,12 +34,15 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -52,7 +59,30 @@ fun LoginScreen(state: AppState, site: Site, onBack: () -> Unit) {
     var password by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var captchaHash by remember { mutableStateOf<String?>(null) }
+    var captchaImage by remember { mutableStateOf<ByteArray?>(null) }
+    var captchaCode by remember { mutableStateOf("") }
     val current = state.site(site.id) ?: site
+
+    fun refreshCaptcha() {
+        state.fetchLoginCaptcha(current) { c ->
+            if (c != null) {
+                captchaHash = c.hash
+                captchaImage = c.image
+            }
+        }
+    }
+
+    // 进入页面先探一次验证码：站点开启时直接展示
+    LaunchedEffect(current.id) {
+        if (!current.loggedIn) refreshCaptcha()
+    }
+
+    val captchaBitmap = remember(captchaImage) {
+        captchaImage?.let { bytes ->
+            runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap() }.getOrNull()
+        }
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
@@ -137,6 +167,42 @@ fun LoginScreen(state: AppState, site: Site, onBack: () -> Unit) {
                 shape = RoundedCornerShape(14.dp)
             )
 
+            if (captchaHash != null) {
+                Spacer(Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = captchaCode,
+                        onValueChange = { captchaCode = it; error = null },
+                        label = { Text("验证码") },
+                        leadingIcon = { Icon(Icons.Outlined.VerifiedUser, null, Modifier.size(18.dp)) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(14.dp)
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    if (captchaBitmap != null) {
+                        Image(
+                            bitmap = captchaBitmap,
+                            contentDescription = "验证码，点击刷新",
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .height(48.dp)
+                                .width(110.dp)
+                                .clickable { captchaCode = ""; refreshCaptcha() }
+                        )
+                    } else {
+                        TextButton(onClick = { refreshCaptcha() }) { Text("点击获取") }
+                    }
+                }
+                Text(
+                    "看不清？点图片换一张",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+
             error?.let {
                 Spacer(Modifier.height(10.dp))
                 Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
@@ -149,10 +215,21 @@ fun LoginScreen(state: AppState, site: Site, onBack: () -> Unit) {
                         error = "请输入账号和密码"
                         return@Button
                     }
+                    if (captchaHash != null && captchaCode.isBlank()) {
+                        error = "请输入图片验证码"
+                        return@Button
+                    }
                     busy = true
-                    state.login(current, username, password) { res ->
+                    state.login(current, username, password, captchaHash, captchaCode) { res ->
                         busy = false
-                        res.onFailure { error = it.message }
+                        res.onFailure {
+                            error = it.message
+                            // 验证码错误：清空并换一张
+                            if (it.message?.contains("验证码") == true) {
+                                captchaCode = ""
+                                refreshCaptcha()
+                            }
+                        }
                         res.onSuccess { onBack() }
                     }
                 },
@@ -179,7 +256,8 @@ fun LoginScreen(state: AppState, site: Site, onBack: () -> Unit) {
                 shape = RoundedCornerShape(12.dp)
             ) {
                 Text(
-                    "说明：部分论坛开启了验证码或安全提问，这类账号暂时只能在网页版登录；" +
+                    "说明：站点开启图片验证码时会自动显示验证码输入框；" +
+                        "遇到安全问题（密保提问）请改用网页模式登录。" +
                         "登录状态仅保存在本机，不会上传到任何服务器。",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

@@ -260,7 +260,33 @@ class ForumClient(private val http: Http) {
         Regex("formhash=([0-9a-zA-Z]{6,})").find(html)?.groupValues?.get(1)
             ?: Jsoup.parse(html).selectFirst("input[name=formhash]")?.attr("value").orEmpty()
 
-    suspend fun login(site: Site, username: String, password: String): Result<String> =
+    /** 登录验证码（Discuz seccode）：hash + 图片字节 */
+    data class LoginCaptcha(val hash: String, val image: ByteArray)
+
+    /**
+     * 取一次登录验证码。返回 null 表示该站点登录不需要验证码（或取图失败）。
+     * 注意：验证码与当前会话 Cookie 绑定，因此必须在同一 Http 实例下取图并提交。
+     */
+    suspend fun loginCaptcha(site: Site): LoginCaptcha? = withContext(Dispatchers.IO) {
+        val loginUrl = u(site, "member.php?mod=logging&action=login&mobile=2")
+        val html = http.get(loginUrl) ?: return@withContext null
+        val hash = Regex("name=[\"']seccodehash[\"'][^>]*value=[\"']([^\"']+)[\"']")
+            .find(html)?.groupValues?.get(1)
+            ?: Regex("idhash=([0-9A-Za-z]+)").find(html)?.groupValues?.get(1)
+            ?: return@withContext null
+
+        val imgUrl = u(site, "misc.php?mod=seccode&action=update&idhash=$hash&modid=member::logging&mobile=2&t=${System.currentTimeMillis()}")
+        val bytes = http.getBytes(imgUrl, referer = loginUrl) ?: return@withContext null
+        if (bytes.size < 64) null else LoginCaptcha(hash, bytes)
+    }
+
+    suspend fun login(
+        site: Site,
+        username: String,
+        password: String,
+        captchaHash: String? = null,
+        captchaCode: String? = null
+    ): Result<String> =
         withContext(Dispatchers.IO) {
             val loginUrl = u(site, "member.php?mod=logging&action=login&mobile=2")
             val html = http.get(loginUrl)
@@ -273,29 +299,39 @@ class ForumClient(private val http: Http) {
                 u(site, "member.php?mod=logging&action=login&loginsubmit=yes&handlekey=login&loginhash=$loginhash&inajax=1&mobile=2")
             else u(site, "member.php?mod=logging&action=login&loginsubmit=yes&inajax=1&mobile=2")
 
-            val body = http.post(
-                postUrl,
-                mapOf(
-                    "formhash" to formhash,
-                    "referer" to u(site, "forum.php"),
-                    "loginfield" to "username",
-                    "fastloginfield" to "username",
-                    "username" to username,
-                    "password" to password,
-                    "questionid" to "0",
-                    "answer" to "",
-                    "cookietime" to "2592000"
-                ),
-                referer = loginUrl
-            ) ?: return@withContext Result.failure(Exception("登录请求失败，请检查网络"))
+            val form = mutableMapOf(
+                "formhash" to formhash,
+                "referer" to u(site, "forum.php"),
+                "loginfield" to "username",
+                "fastloginfield" to "username",
+                "username" to username,
+                "password" to password,
+                "questionid" to "0",
+                "answer" to "",
+                "cookietime" to "2592000"
+            )
+            if (!captchaHash.isNullOrBlank() && !captchaCode.isNullOrBlank()) {
+                form["seccodehash"] = captchaHash
+                form["seccodeverify"] = captchaCode
+                form["seccodemodid"] = "member::logging"
+            }
+
+            val body = http.post(postUrl, form, referer = loginUrl)
+                ?: return@withContext Result.failure(Exception("登录请求失败，请检查网络"))
 
             val ok = body.contains("欢迎您回来") || body.contains("现在将转入登录前页面") ||
                 body.contains("欢迎你回来") || http.hasLoginCookie(site)
             if (!ok) {
-                val msg = Regex("errorhandle_[a-z]*\">([^<]+)<").find(body)?.groupValues?.get(1)
+                val raw = Regex("errorhandle_[a-z]*\">([^<]+)<").find(body)?.groupValues?.get(1)
                     ?: Regex("<p>([^<]{4,60})</p>").find(body)?.groupValues?.get(1)
-                    ?: "登录失败，请检查账号密码（部分站点需要验证码，建议先在网页版登录）"
-                return@withContext Result.failure(Exception(Jsoup.parse(msg).text()))
+                    ?: ""
+                val msg = Jsoup.parse(raw).text()
+                val hint = when {
+                    msg.contains("验证码") || body.contains("验证码") -> "验证码错误或已过期，请重新输入"
+                    msg.isNotBlank() -> msg
+                    else -> "登录失败，请检查账号密码（部分站点需要验证码，建议先在网页版登录）"
+                }
+                return@withContext Result.failure(Exception(hint))
             }
             Result.success(username)
         }
