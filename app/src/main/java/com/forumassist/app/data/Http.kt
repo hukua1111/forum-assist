@@ -89,14 +89,15 @@ class Http(private val store: Store) {
         .followSslRedirects(true)
         .build()
 
+    /**
+     * 抓取统一使用电脑版 UA：Discuz 手机模板缺首页四格、附件等结构，解析规则也只针对电脑版。
+     * 网页模式（WebScreen）由 WebView 使用系统默认的移动 UA，不受这里影响。
+     */
     private val ua =
-        "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) " +
-            "Chrome/124.0.0.0 Mobile Safari/537.36"
-
-    /** 桌面 UA：部分内容（如 Discuz 首页四格）只在电脑版模板里存在 */
-    private val desktopUa =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) " +
             "Chrome/124.0.0.0 Safari/537.36"
+
+    private val desktopUa = ua
 
     fun get(url: String, referer: String? = null, desktop: Boolean = false): String? = runCatching {
         val builder = Request.Builder().url(url).get()

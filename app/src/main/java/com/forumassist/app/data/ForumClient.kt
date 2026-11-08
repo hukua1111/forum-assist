@@ -16,8 +16,10 @@ class ForumClient(private val http: Http) {
         site.baseUrl.trimEnd('/') + "/" + path.trimStart('/')
 
     private fun pageUrl(site: Site, path: String, page: Int): String {
-        val sep = if (path.contains("?")) "&" else "?"
-        return u(site, path) + sep + "mobile=2" + if (page > 1) "&page=$page" else ""
+        // 解析统一走电脑版模板（手机模板缺四格/附件等结构）；网页模式仍由 WebView 用移动 UA
+        val base = u(site, path)
+        if (page <= 1) return base
+        return base + (if (base.contains("?")) "&" else "?") + "page=$page"
     }
 
     // ---------------------------------------------------------------- 版块
@@ -397,7 +399,7 @@ class ForumClient(private val http: Http) {
 
     suspend fun search(site: Site, keyword: String): List<ThreadSummary> = withContext(Dispatchers.IO) {
         val q = java.net.URLEncoder.encode(keyword, "UTF-8")
-        val html = http.get(u(site, "search.php?mod=forum&srchtxt=$q&searchsubmit=yes&mobile=2"))
+        val html = http.get(u(site, "search.php?mod=forum&srchtxt=$q&searchsubmit=yes"))
             ?: return@withContext emptyList()
         parseThreads(html, site)
     }
@@ -406,9 +408,9 @@ class ForumClient(private val http: Http) {
         val doc = Jsoup.parse(html, site.baseUrl)
         val map = LinkedHashMap<String, ThreadSummary>()
         // 跳过手机版首页的广告位/四页 tab 链接，避免把「新人必看」这类公告当成信息流
-        val links = doc.select("a[href*=viewthread], a[href*=thread-]").filter {
-            it.closest(".ma-text-grid, .mobile-adv, .tabs, #tabs-box") == null
-        }
+        val links = doc.select("a[href*=viewthread], a[href*=thread-]")
+            .toList()
+            .filter { it.closest(".ma-text-grid, .mobile-adv, .tabs, #tabs-box") == null }
         for (a in links) {
             val href = a.attr("href")
             val tid = tidOf(href) ?: continue
@@ -619,6 +621,31 @@ class ForumClient(private val http: Http) {
         val html = body.html()
         var isOp = floor == 1
         if (!isOp && index == 0) isOp = true
+
+        val blocks = HtmlBlocks.parse(html).toMutableList()
+        // 附件不在正文节点里，而在同楼层的 .pattl > dl.tattl 中（付费附件链接是 attachpay）
+        val attScope = if (holder.selectFirst("div.pattl, dl.tattl") != null) holder
+        else holder.parents().take(5).firstOrNull { it.selectFirst("div.pattl, dl.tattl") != null } ?: holder
+        val seenAtt = HashSet<String>()
+        for (dl in attScope.select("div.pattl dl.tattl, dl.tattl")) {
+            val link = dl.selectFirst("p.attnm a[href], .attnm a[href]") ?: continue
+            val name = link.text().trim()
+            if (name.isBlank()) continue
+            val href = link.absUrl("href").ifBlank { link.attr("href") }
+            if (href.isBlank() || !href.startsWith("http")) continue
+            if (!seenAtt.add(name + "|" + href)) continue
+
+            val meta = dl.select("p").map { it.text().trim() }
+                .filter {
+                    it.isNotBlank() && (
+                        it.contains("MB") || it.contains("KB") || it.contains("GB") ||
+                            it.contains("下载") || it.contains("售价") || it.contains("金币") || it.contains("金钱")
+                        )
+                }
+                .joinToString(" · ")
+            blocks.add(Block.File(name = name, url = href, meta = meta))
+        }
+
         return Post(
             pid = pid,
             floor = floor,
@@ -627,7 +654,7 @@ class ForumClient(private val http: Http) {
             avatar = avatar,
             time = timeRaw,
             html = html,
-            blocks = HtmlBlocks.parse(html),
+            blocks = blocks,
             isOp = isOp
         )
     }

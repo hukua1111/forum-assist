@@ -379,6 +379,51 @@ private fun PostCard(post: Post, site: Site, accent: Color) {
                                 )
                             }
 
+                            is Block.File -> {
+                                val ctx = LocalContext.current
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+                                        .clickable {
+                                            runCatching {
+                                                ctx.startActivity(
+                                                    Intent(
+                                                        Intent.ACTION_VIEW,
+                                                        android.net.Uri.parse(block.url)
+                                                    )
+                                                )
+                                            }
+                                        }
+                                        .padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        Icons.Outlined.Download, "附件",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(Modifier.width(10.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = block.name,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            maxLines = 3,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        if (block.meta.isNotBlank()) {
+                                            Text(
+                                                text = block.meta,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
                             is Block.Image -> AsyncImage(
                                 model = block.url,
                                 contentDescription = null,

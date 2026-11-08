@@ -137,6 +137,13 @@ sealed class Block {
     data class Text(val text: String) : Block()
     data class Image(val url: String) : Block()
     data class Quote(val text: String) : Block()
+
+    /** 帖子附件（Discuz 的 .pattl / dl.tattl）：文件名 + 下载/购买链接 */
+    data class File(
+        val name: String,
+        val url: String,
+        val meta: String = ""
+    ) : Block()
 }
 
 data class Post(
