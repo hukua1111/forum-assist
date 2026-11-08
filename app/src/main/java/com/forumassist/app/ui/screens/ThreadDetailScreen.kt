@@ -152,6 +152,11 @@ fun ThreadDetailScreen(
             loading = false
             if (!site.isDemo && state.settings.webRenderFallback) {
                 // 自动用隐藏 WebView 真实渲染一次（可过 WAF / JS 签名）
+                com.forumassist.app.data.AppLog.w(
+                    "正文",
+                    "tid=${thread.tid} 直接抓取失败，转站内渲染 " +
+                        (state.lastDetailError.orEmpty().lineSequence().firstOrNull().orEmpty())
+                )
                 fallbackUrl = thread.url.ifBlank { url }
                 rendering = true
             }
@@ -271,10 +276,18 @@ fun ThreadDetailScreen(
                     scope.launch {
                         val parsed = state.detailFromHtml(site, thread.tid, html)
                         if (parsed != null && parsed.posts.isNotEmpty()) {
+                            com.forumassist.app.data.AppLog.d(
+                                "正文",
+                                "tid=${thread.tid} 站内渲染成功 ${parsed.posts.size} 楼 ${html.length}B"
+                            )
                             detail = parsed
                             error = null
                             state.markRead(thread)
                         } else {
+                            com.forumassist.app.data.AppLog.w(
+                                "正文",
+                                "tid=${thread.tid} 站内渲染拿到 ${html.length}B 但解析不出正文"
+                            )
                             error = (error ?: "正文加载失败") + "\n\n已尝试站内渲染，仍未能解析出正文。"
                         }
                         rendering = false
@@ -282,6 +295,7 @@ fun ThreadDetailScreen(
                     }
                 },
                 onFailed = {
+                    com.forumassist.app.data.AppLog.w("正文", "tid=${thread.tid} 站内渲染失败")
                     error = (error ?: "正文加载失败") + "\n\n站内渲染失败，可改用网页模式阅读。"
                     rendering = false
                     fallbackUrl = null
@@ -412,45 +426,67 @@ fun ThreadDetailScreen(
     }
 
     pendingFile?.let { f ->
+        val pay = f.needsPay
+        // 真正落盘：带 Cookie 直接抓文件，结果用 Toast 反馈
+        val doDownload: () -> Unit = {
+            val target = f
+            downloading = true
+            scope.launch {
+                val res = withContext(Dispatchers.IO) {
+                    AttachmentSaver.save(
+                        context = context,
+                        http = state.client.httpClient,
+                        url = target.url,
+                        fileName = target.name,
+                        referer = referer,
+                        treeUri = state.store.downloadTree()
+                    )
+                }
+                downloading = false
+                pendingFile = null
+                Toast.makeText(context, res.message, Toast.LENGTH_LONG).show()
+            }
+        }
         AlertDialog(
             onDismissRequest = { if (!downloading) pendingFile = null },
             title = { Text(f.name, maxLines = 3, overflow = TextOverflow.Ellipsis) },
             text = {
                 Text(
-                    if (downloading) "正在下载，请稍候…"
-                    else "保存到「设置 → 附件下载」里选的文件夹。\n" +
-                        "如果站点提示需要购买，先点「网页打开」买完再回来下载。"
+                    when {
+                        downloading -> "正在下载，请稍候…"
+                        pay -> "这个附件需要先购买" +
+                            (if (f.meta.isNotBlank()) "（${f.meta}）" else "") + "。\n" +
+                            "点「购买并下载」在站内打开购买页，买完点页面里的下载链接会直接存到这里；\n" +
+                            "也可以在那边买完返回，再点一次附件直接下载。"
+                        else -> "保存到「设置 → 附件下载」里选的文件夹。\n" +
+                            "如果站点提示需要购买，先点「网页打开」买完再回来下载。"
+                    }
                 )
             },
             confirmButton = {
-                TextButton(
-                    enabled = !downloading,
-                    onClick = {
-                        val target = f
-                        downloading = true
-                        scope.launch {
-                            val res = withContext(Dispatchers.IO) {
-                                AttachmentSaver.save(
-                                    context = context,
-                                    http = state.client.httpClient,
-                                    url = target.url,
-                                    fileName = target.name,
-                                    referer = referer,
-                                    treeUri = state.store.downloadTree()
-                                )
-                            }
-                            downloading = false
+                if (pay) {
+                    TextButton(
+                        enabled = !downloading,
+                        onClick = {
+                            val target = f
                             pendingFile = null
-                            Toast.makeText(context, res.message, Toast.LENGTH_LONG).show()
+                            onOpenUrl(target.url)
                         }
+                    ) { Text("购买并下载") }
+                } else {
+                    TextButton(enabled = !downloading, onClick = doDownload) {
+                        Text(if (downloading) "下载中…" else "下载")
                     }
-                ) { Text(if (downloading) "下载中…" else "下载") }
+                }
             },
             dismissButton = {
                 TextButton(onClick = {
-                    pendingFile = null
-                    onOpenUrl(f.url)
-                }) { Text("网页打开") }
+                    if (downloading) return@TextButton
+                    if (pay) doDownload() else {
+                        pendingFile = null
+                        onOpenUrl(f.url)
+                    }
+                }) { Text(if (pay) "直接下载" else "网页打开") }
             }
         )
     }
@@ -458,6 +494,11 @@ fun ThreadDetailScreen(
 
 /** 附件下载回调：BlockContent 埋在很深的列表里，用 CompositionLocal 传比层层加参数省事 */
 private val LocalAttachmentDownload = staticCompositionLocalOf<(Block.File) -> Unit> { {} }
+
+/** 付费附件：meta 里带售价/购买标记（解析时补的「需购买」也算） */
+private val Block.File.needsPay: Boolean
+    get() = meta.contains("需购买") || meta.contains("售价") ||
+        meta.contains("金币") || meta.contains("金钱") || meta.contains("购买")
 
 @Composable
 private fun DetailHead(
@@ -695,6 +736,25 @@ private fun BlockContent(
                         text = block.meta,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            // 付费附件：把「购买并下载」贴在附件卡片上，不再作为一个单独的附件出现
+            if (block.needsPay) {
+                Spacer(Modifier.width(8.dp))
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+                    )
+                ) {
+                    Text(
+                        text = "购买并下载",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                     )
                 }
             }

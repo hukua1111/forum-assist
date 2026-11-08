@@ -60,8 +60,9 @@ private data class Tab(val route: String, val label: String, val icon: ImageVect
 
 private val tabs = listOf(
     Tab("home", "首页", Icons.Outlined.Home),
-    Tab("sites", "论坛", Icons.Outlined.Forum),
+    // 「板块」放第二位：追更时点它比点「论坛」更常用，论坛管理入口挪到后面
     Tab("pinned", "板块", Icons.Outlined.GridView),
+    Tab("sites", "论坛", Icons.Outlined.Forum),
     Tab("me", "我的", Icons.Outlined.Person)
 )
 

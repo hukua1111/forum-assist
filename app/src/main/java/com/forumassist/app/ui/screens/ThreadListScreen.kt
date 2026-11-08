@@ -50,6 +50,17 @@ import com.forumassist.app.ui.components.ThreadCard
 
 private val DEFAULT_ORDERS = DefaultBoardOrders
 
+/**
+ * 选中项的 query。
+ * 页面解析出来的选项 key 本身就是链接原文（如 filter=heat&orderby=heats）；
+ * 记忆恢复时选项列表可能还没解析回来，这时直接把 key 当 query 用，不能退化成「全部」。
+ */
+private fun queryOf(options: List<BoardFilter>, key: String): String {
+    if (key.isBlank()) return ""
+    val hit = options.firstOrNull { it.key == key }?.query.orEmpty()
+    return hit.ifBlank { if (key.contains("=")) key else "" }
+}
+
 @Composable
 fun ThreadListScreen(
     state: AppState,
@@ -62,9 +73,11 @@ fun ThreadListScreen(
     onLogin: () -> Unit = {},
     onOpenWeb: () -> Unit = {}
 ) {
+    // 上次在这个版块用的筛选：从正文退回来 / 切走再回来都还原，不再重置成「全部」
+    val saved = remember(fid, site.id) { state.boardFilter(site.id, fid) }
     // 第一层用 key 记选中项，真正请求用的是它的 query（页面链接原文）
-    var orderKey by remember(fid, site.id) { mutableStateOf("") }
-    var typeKey by remember(fid, site.id) { mutableStateOf("") }
+    var orderKey by remember(fid, site.id) { mutableStateOf(saved?.first.orEmpty()) }
+    var typeKey by remember(fid, site.id) { mutableStateOf(saved?.second.orEmpty()) }
     // 第一层排序以页面解析结果为准（不同版块入口不同），拿不到才用兜底
     var orders by remember(fid, site.id) { mutableStateOf(DEFAULT_ORDERS) }
     // 换版块时分类列表要重来，否则会带着上一个版块的 typeid 去请求
@@ -86,6 +99,11 @@ fun ThreadListScreen(
     val visible = remember(items) { items.filterNot { it.isTop } }
 
     LaunchedEffect(site.id) { state.syncLoginState(site) }
+
+    // 筛选一变就记下来（回到这个版块时还原）
+    LaunchedEffect(orderKey, typeKey) {
+        state.saveBoardFilter(site.id, fid, orderKey, typeKey)
+    }
 
     LaunchedEffect(site.id, fid, orderKey, typeKey, reloadKey) {
         val cached = state.cachedBoard(cacheKey)
@@ -129,8 +147,8 @@ fun ThreadListScreen(
         )
 
         try {
-            val orderQuery = orders.firstOrNull { it.key == orderKey }?.query.orEmpty()
-            val typeQuery = types.firstOrNull { it.key == typeKey }?.query.orEmpty()
+            val orderQuery = queryOf(orders, orderKey)
+            val typeQuery = queryOf(types, typeKey)
             val data = kotlinx.coroutines.withTimeoutOrNull(15_000L) {
                 state.threadPage(site, fid, 1, orderQuery, typeQuery)
             }
@@ -199,8 +217,8 @@ fun ThreadListScreen(
             loading = true
             val next = page + 1
             try {
-                val orderQuery = orders.firstOrNull { it.key == orderKey }?.query.orEmpty()
-                val typeQuery = types.firstOrNull { it.key == typeKey }?.query.orEmpty()
+                val orderQuery = queryOf(orders, orderKey)
+                val typeQuery = queryOf(types, typeKey)
                 val more = state.threadPage(site, fid, next, orderQuery, typeQuery).threads
                 page = next
                 if (more.isEmpty()) {

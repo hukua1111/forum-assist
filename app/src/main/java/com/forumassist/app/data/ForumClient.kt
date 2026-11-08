@@ -789,39 +789,33 @@ class ForumClient(private val http: Http) {
                 }
                 add(pageUrl(site, "forum.php?mod=viewthread&tid=$tid", page))
                 add(u(site, "forum.php?mod=viewthread&tid=$tid" + if (page > 1) "&page=$page" else ""))
+                // 显式要电脑版：手机模板有时只回一个空壳（正文靠前端 JS 拉），电脑版永远带 t_f
+                add(
+                    u(
+                        site,
+                        "forum.php?mod=viewthread&tid=$tid" +
+                            (if (page > 1) "&page=$page" else "") + "&mobile=no"
+                    )
+                )
                 add(u(site, "archiver/tid-$tid.html" + if (page > 1) "?page=$page" else ""))
             }.distinct()
 
-            val diag = StringBuilder()
+            // 并发场景下多个入口都会往里写，用同步列表避免互踩
+            val notes = java.util.Collections.synchronizedList(mutableListOf<String>())
             // 尚香书苑：各入口互相独立，串行请求最坏要等 4×18 秒。
             // 并发探测，谁先拿到正文用谁，整体给 12 秒上限。
             if (site.profile.parallelDetail) {
-                return@withContext detailRacing(site, tid, page, candidates, diag)
+                return@withContext detailRacing(site, tid, page, candidates, notes)
             }
             for (url in candidates) {
-                // 带 Referer，某些站点的防采集插件会校验来源
-                val html = http.get(url, referer = site.baseUrl.trimEnd('/') + "/forum.php")
-                if (html == null) {
-                    diag.append("· 请求失败 ").append(url.take(90)).append('\n')
-                    continue
-                }
-                val doc = Jsoup.parse(html, site.baseUrl)
-                val bodyCount = doc.select(BODY_SELECTOR).count { it.text().isNotBlank() }
-                diag.append("· ").append(url.substringAfter("://").take(70))
-                    .append(" | title=").append(doc.title().take(30))
-                    .append(" | 正文节点=").append(bodyCount).append('\n')
-                if (isLoginWall(html)) {
-                    diag.append("  → 判定为登录页，跳过\n")
-                    continue
-                }
-                val parsed = parseDetail(html, site, tid, page) ?: continue
-                if (parsed.posts.isNotEmpty()) {
+                val parsed = fetchDetail(url, site, tid, page, notes)
+                if (parsed != null) {
                     lastDetailDebug = "成功：" + parsed.posts.size + " 楼"
                     AppLog.d("正文", "tid=$tid 第$page 页 成功 ${parsed.posts.size} 楼")
                     return@withContext parsed
                 }
             }
-            lastDetailDebug = diag.toString().ifBlank { "无可用请求" }
+            lastDetailDebug = notes.joinToString("\n").ifBlank { "无可用请求" }
             AppLog.w("正文", "tid=$tid 第$page 页 抓取失败：$lastDetailDebug")
             null
         }
@@ -842,7 +836,7 @@ class ForumClient(private val http: Http) {
         tid: String,
         page: Int,
         candidates: List<String>,
-        diag: StringBuilder
+        notes: MutableList<String>
     ): ThreadDetail? {
         // 用独立 scope 发请求：OkHttp 的阻塞式调用无法被协程中断，
         // 若挂在调用方的结构化作用域里，最先返回后还要等其余请求跑完，等于白并发。
@@ -853,7 +847,7 @@ class ForumClient(private val http: Http) {
 
         fun fire(url: String) {
             scope.launch {
-                val parsed = runCatching { fetchDetail(url, site, tid, page) }.getOrNull()
+                val parsed = runCatching { fetchDetail(url, site, tid, page, notes) }.getOrNull()
                 if (parsed != null) {
                     first.complete(parsed)
                 } else if (left.decrementAndGet() == 0) {
@@ -862,7 +856,7 @@ class ForumClient(private val http: Http) {
             }
         }
 
-        try {
+        val hit = try {
             // 先发两个主入口（列表原链 + 手机版），1.2 秒没命中再补发备用入口。
             // 四个入口同时下载整页（每页几百 KB）会互相抢带宽，正常情况反而更慢。
             val primary = candidates.take(2)
@@ -874,22 +868,77 @@ class ForumClient(private val http: Http) {
                     if (!first.isCompleted) backup.forEach { fire(it) }
                 }
             }
-            val hit = withTimeoutOrNull(6_500L) { first.await() }
-            lastDetailDebug = hit?.let { "成功：${it.posts.size} 楼（并发探测）" }
-                ?: diag.toString().ifBlank { "并发探测 ${candidates.size} 个入口均未拿到正文" }
-            if (hit == null) AppLog.w("正文", "tid=$tid 并发探测失败：$lastDetailDebug")
-            else AppLog.d("正文", "tid=$tid 并发探测成功 ${hit.posts.size} 楼")
-            return hit
+            withTimeoutOrNull(6_500L) { first.await() }
         } finally {
             scope.cancel()
         }
+
+        if (hit != null) {
+            lastDetailDebug = "成功：${hit.posts.size} 楼（并发探测）"
+            AppLog.d("正文", "tid=$tid 并发探测成功 ${hit.posts.size} 楼")
+            return hit
+        }
+
+        // 第二轮：站点偶尔会先回一个提示页（防盗链/频率限制/CDN 把错误页缓存到了这个 URL），
+        // 隔一秒带上时间戳换一条 URL 再要一次，多数能拿到正常页；仍然失败才算真失败。
+        delay(1_000L)
+        for (url in retryCandidates(site, tid, page)) {
+            val parsed = runCatching { fetchDetail(url, site, tid, page, notes) }.getOrNull()
+            if (parsed != null) {
+                lastDetailDebug = "成功：${parsed.posts.size} 楼（重试）"
+                AppLog.d("正文", "tid=$tid 重试成功 ${parsed.posts.size} 楼")
+                return parsed
+            }
+        }
+
+        lastDetailDebug = notes.joinToString("\n")
+            .ifBlank { "并发探测 ${candidates.size} 个入口均未拿到正文" }
+        AppLog.w("正文", "tid=$tid 并发探测失败：$lastDetailDebug")
+        return null
     }
 
-    private fun fetchDetail(url: String, site: Site, tid: String, page: Int): ThreadDetail? {
-        val html = http.get(url, referer = site.baseUrl.trimEnd('/') + "/forum.php") ?: return null
-        if (isLoginWall(html)) return null
-        val parsed = parseDetail(html, site, tid, page) ?: return null
-        return if (parsed.posts.isNotEmpty()) parsed else null
+    /** 重试用入口：加 _t 打散缓存键，避免再次命中同一个缓存下来的错误页 */
+    private fun retryCandidates(site: Site, tid: String, page: Int): List<String> {
+        val t = System.currentTimeMillis()
+        val pageQuery = if (page > 1) "&page=$page" else ""
+        return listOf(
+            u(site, "forum.php?mod=viewthread&tid=$tid$pageQuery&mobile=no&_t=$t"),
+            u(site, "archiver/tid-$tid.html" + (if (page > 1) "?page=$page&_t=$t" else "?_t=$t"))
+        )
+    }
+
+    private fun fetchDetail(
+        url: String,
+        site: Site,
+        tid: String,
+        page: Int,
+        notes: MutableList<String>? = null
+    ): ThreadDetail? {
+        // 带 Referer，某些站点的防采集插件会校验来源
+        val html = http.get(url, referer = site.baseUrl.trimEnd('/') + "/forum.php")
+        if (html == null) {
+            notes?.add("· 请求失败 " + url.substringAfter("://").take(60))
+            return null
+        }
+        if (isLoginWall(html)) {
+            notes?.add("· 登录页 " + url.substringAfter("://").take(60))
+            return null
+        }
+        val parsed = parseDetail(html, site, tid, page)
+        if (parsed != null && parsed.posts.isNotEmpty()) return parsed
+        val reason = stubReason(html)
+        notes?.add("· " + url.substringAfter("://").take(60) + " → " + reason)
+        AppLog.d("正文", "tid=$tid 入口无正文：$reason")
+        return null
+    }
+
+    /** 抓不到正文时，把「这个页面到底是什么」记下来（权限不足/审核中/请先登录都是小提示页） */
+    private fun stubReason(html: String): String {
+        val doc = runCatching { Jsoup.parse(html) }.getOrNull()
+        val msg = doc?.selectFirst("#messagetext, .alert_info, .alert_error, .alert_error_msg, div.message")
+            ?.text()?.replace(Regex("\\s+"), " ")?.trim()?.take(70).orEmpty()
+        val title = doc?.title()?.trim()?.take(20).orEmpty()
+        return if (msg.isNotBlank()) "提示页「$title」$msg" else "无正文 ${html.length}B 标题「$title」"
     }
 
     /**
@@ -910,6 +959,11 @@ class ForumClient(private val http: Http) {
 
     private fun parseDetail(html: String, site: Site, tid: String, page: Int): ThreadDetail? {
         val doc = Jsoup.parse(html, site.baseUrl)
+        // Discuz 的「提示信息」模板（权限不足 / 需购买 / 请先登录 / 审核中）里也有 div.message，
+        // 长得很像正文；没有 post_ 容器时直接判负，别把提示语当成帖子内容渲染出来。
+        if (doc.select("div[id^=post_]").isEmpty() &&
+            doc.selectFirst("#messagetext, .alert_info, .alert_error, .alert_error_msg") != null
+        ) return null
         val title = doc.selectFirst("#thread_subject")?.text()?.trim()?.ifBlank { null }
             ?: doc.selectFirst(".thread-title, .threadtitle, h1.ts, h1")?.text()?.trim()?.ifBlank { null }
             ?: doc.title().substringBefore(" - ").substringBefore("_").trim()

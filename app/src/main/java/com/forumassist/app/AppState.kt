@@ -660,6 +660,22 @@ class AppState(context: Context) {
     /** 清缓存时连板块列表缓存一起清掉 */
     fun clearBoardCache() = boardPageCache.clear()
 
+    /**
+     * 版块筛选记忆：key = siteId|fid → (排序 key, 分类 key)。
+     * 进正文再退回来、或者从别的页面回到同一个版块，都还原上次的筛选，
+     * 不会一回来就被重置成「全部」。
+     */
+    private val boardFilters = mutableMapOf<String, Pair<String, String>>()
+
+    fun boardFilter(siteId: String, fid: String): Pair<String, String>? =
+        boardFilters["$siteId|$fid"]
+
+    fun saveBoardFilter(siteId: String, fid: String, orderKey: String, typeKey: String) {
+        val key = "$siteId|$fid"
+        if (orderKey.isBlank() && typeKey.isBlank()) boardFilters.remove(key)
+        else boardFilters[key] = orderKey to typeKey
+    }
+
     /** 详情抓取失败时的诊断信息（展示在详情页错误提示里，便于排查） */
     var lastDetailError: String? = null
         private set

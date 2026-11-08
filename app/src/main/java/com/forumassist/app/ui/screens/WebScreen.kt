@@ -11,6 +11,8 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.URLUtil
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -36,6 +38,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -44,7 +47,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.forumassist.app.data.AdBlock
+import com.forumassist.app.data.AttachmentSaver
 import java.io.ByteArrayInputStream
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -55,6 +62,9 @@ fun WebScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    // 显式留一份：apply 里 this 是 WebView，也有 url 属性，容易读混
+    val pageUrl = url
     var webView by remember { mutableStateOf<WebView?>(null) }
     var progress by remember { mutableStateOf(0) }
     var pageTitle by remember { mutableStateOf(title) }
@@ -223,6 +233,29 @@ fun WebScreen(
                                 // 隐藏页面里的广告位（与网络层拦截配合）
                                 if (adBlockOn) {
                                     runCatching { view?.evaluateJavascript(AdBlock.COSMETIC_JS, null) }
+                                }
+                            }
+                        }
+                        // 网页里点「下载 / 购买并下载」时，别让 WebView 干瞪眼：
+                        // 用带 Cookie 的原生请求抓下来，存到设置里选的文件夹
+                        setDownloadListener { dlUrl, _, contentDisposition, mimetype, _ ->
+                            if (dlUrl.startsWith("blob:") || dlUrl.startsWith("data:")) {
+                                Toast.makeText(context, "这个链接需要在浏览器里下载", Toast.LENGTH_SHORT).show()
+                            } else {
+                                val name = URLUtil.guessFileName(dlUrl, contentDisposition, mimetype)
+                                val app = com.forumassist.app.App.state
+                                scope.launch {
+                                    val res = withContext(Dispatchers.IO) {
+                                        AttachmentSaver.save(
+                                            context = context,
+                                            http = app.client.httpClient,
+                                            url = dlUrl,
+                                            fileName = name,
+                                            referer = pageUrl,
+                                            treeUri = app.store.downloadTree()
+                                        )
+                                    }
+                                    Toast.makeText(context, res.message, Toast.LENGTH_LONG).show()
                                 }
                             }
                         }
