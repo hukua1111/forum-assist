@@ -29,16 +29,17 @@ import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.CleaningServices
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Palette
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import top.yukonga.miuix.kmp.basic.Icon
+import top.yukonga.miuix.kmp.basic.IconButton
+import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.basic.TextField
+import top.yukonga.miuix.kmp.extra.SuperDialog
+import top.yukonga.miuix.kmp.basic.Slider
+import top.yukonga.miuix.kmp.basic.Surface
+import top.yukonga.miuix.kmp.basic.Switch
+import top.yukonga.miuix.kmp.basic.TabRow
+import top.yukonga.miuix.kmp.basic.Text
+import com.forumassist.app.ui.components.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -76,9 +77,9 @@ fun SettingsScreen(state: AppState, onBack: () -> Unit, onOpenLogs: () -> Unit =
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回", tint = MaterialTheme.colorScheme.onBackground)
+                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回", tint = MiuixTheme.colorScheme.onBackground)
             }
-            Text("设置", style = MaterialTheme.typography.titleLarge)
+            Text("设置", style = MiuixTheme.textStyles.title3)
         }
 
         Column(
@@ -90,45 +91,24 @@ fun SettingsScreen(state: AppState, onBack: () -> Unit, onOpenLogs: () -> Unit =
             SectionLabel("外观")
             SoftCard(modifier = Modifier.padding(horizontal = 14.dp)) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("主题模式", style = MaterialTheme.typography.bodyLarge)
+                    Text("主题模式", style = MiuixTheme.textStyles.body2)
                     Spacer(Modifier.height(10.dp))
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp))
-                            .padding(3.dp),
-                        horizontalArrangement = Arrangement.spacedBy(3.dp)
-                    ) {
-                        listOf("跟随系统", "浅色", "深色").forEachIndexed { i, label ->
-                            val selected = s.themeMode == i
-                            Surface(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clickable { state.updateSettings(s.copy(themeMode = i)) },
-                                shape = RoundedCornerShape(9.dp),
-                                color = if (selected) MaterialTheme.colorScheme.surface else Color.Transparent
-                            ) {
-                                Text(
-                                    text = label,
-                                    modifier = Modifier.padding(vertical = 8.dp),
-                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = if (selected) MaterialTheme.colorScheme.onSurface
-                                    else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
+                    TabRow(
+                        tabs = listOf("跟随系统", "浅色", "深色"),
+                        selectedTabIndex = s.themeMode,
+                        onTabSelected = { state.updateSettings(s.copy(themeMode = it)) },
+                        modifier = Modifier.fillMaxWidth()
+                    )
 
                     Spacer(Modifier.height(18.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
                             Icons.Outlined.Palette, null,
                             modifier = Modifier.size(16.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            tint = MiuixTheme.colorScheme.onBackgroundVariant
                         )
                         Spacer(Modifier.width(6.dp))
-                        Text("主题色", style = MaterialTheme.typography.bodyLarge)
+                        Text("主题色", style = MiuixTheme.textStyles.body2)
                     }
                     Spacer(Modifier.height(12.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -140,7 +120,7 @@ fun SettingsScreen(state: AppState, onBack: () -> Unit, onOpenLogs: () -> Unit =
                                     .clip(CircleShape)
                                     .background(Color(color))
                                     .then(
-                                        if (selected) Modifier.border(2.dp, MaterialTheme.colorScheme.onSurface, CircleShape)
+                                        if (selected) Modifier.border(2.dp, MiuixTheme.colorScheme.onBackground, CircleShape)
                                         else Modifier
                                     )
                                     .clickable { state.updateSettings(s.copy(accent = color)) },
@@ -160,12 +140,12 @@ fun SettingsScreen(state: AppState, onBack: () -> Unit, onOpenLogs: () -> Unit =
 
                     Spacer(Modifier.height(18.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("正文字号", style = MaterialTheme.typography.bodyLarge)
+                        Text("正文字号", style = MiuixTheme.textStyles.body2)
                         Spacer(Modifier.weight(1f))
                         Text(
                             text = "${(s.fontScale * 100).toInt()}%",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            style = MiuixTheme.textStyles.footnote1,
+                            color = MiuixTheme.colorScheme.onBackgroundVariant
                         )
                     }
                     Slider(
@@ -176,8 +156,8 @@ fun SettingsScreen(state: AppState, onBack: () -> Unit, onOpenLogs: () -> Unit =
                     )
                     Text(
                         text = "正文效果预览：慢慢读，才读得进去。",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        style = MiuixTheme.textStyles.body2,
+                        color = MiuixTheme.colorScheme.onBackgroundVariant
                     )
                 }
             }
@@ -317,15 +297,15 @@ fun SettingsScreen(state: AppState, onBack: () -> Unit, onOpenLogs: () -> Unit =
                 SettingRow(title = "版本", trailing = {
                     Text(
                         "${com.forumassist.app.BuildConfig.VERSION_NAME} (${com.forumassist.app.BuildConfig.VERSION_CODE})",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        style = MiuixTheme.textStyles.footnote1,
+                        color = MiuixTheme.colorScheme.onBackgroundVariant
                     )
                 })
                 SettingRow(title = "开源协议", trailing = {
                     Text(
                         "MIT",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        style = MiuixTheme.textStyles.footnote1,
+                        color = MiuixTheme.colorScheme.onBackgroundVariant
                     )
                 })
             }
@@ -333,34 +313,38 @@ fun SettingsScreen(state: AppState, onBack: () -> Unit, onOpenLogs: () -> Unit =
             Spacer(Modifier.height(18.dp))
             Text(
                 "抓取行为仅用于个人阅读，请遵守各论坛的版规与 robots 协议。",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                style = MiuixTheme.textStyles.footnote2,
+                color = MiuixTheme.colorScheme.onBackgroundVariant.copy(alpha = 0.7f),
                 modifier = Modifier.padding(horizontal = 18.dp)
             )
         }
     }
 
     if (confirmClear) {
-        AlertDialog(
-            onDismissRequest = { confirmClear = false },
-            title = { Text("清理缓存？") },
-            text = {
-                Text(
-                    "会删掉已保存的正文、图片和首页列表（约 ${"%.1f".format(cacheMb)} MB）。\n" +
-                        "收藏、已读记录和登录状态不受影响。"
+        SuperDialog(
+            show = true,
+            title = "清理缓存？",
+            summary = "会删掉已保存的正文、图片和首页列表（约 ${"%.1f".format(cacheMb)} MB）。\n" +
+                "收藏、已读记录和登录状态不受影响。",
+            onDismissRequest = { confirmClear = false }
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                TextButton(
+                    text = "取消",
+                    onClick = { confirmClear = false },
+                    modifier = Modifier.weight(1f)
                 )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    state.clearCache()
-                    cacheMb = state.store.cacheSize() / 1024f / 1024f
-                    confirmClear = false
-                }) { Text("清理") }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmClear = false }) { Text("取消") }
+                TextButton(
+                    text = "清理",
+                    onClick = {
+                        state.clearCache()
+                        cacheMb = state.store.cacheSize() / 1024f / 1024f
+                        confirmClear = false
+                    },
+                    modifier = Modifier.weight(1f)
+                )
             }
-        )
+        }
     }
 
     if (editKeywords) {
@@ -395,8 +379,8 @@ fun SettingsScreen(state: AppState, onBack: () -> Unit, onOpenLogs: () -> Unit =
 private fun SectionLabel(text: String) {
     Text(
         text = text,
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        style = MiuixTheme.textStyles.footnote1,
+        color = MiuixTheme.colorScheme.onBackgroundVariant,
         fontWeight = FontWeight.SemiBold,
         modifier = Modifier.padding(start = 22.dp, top = 18.dp, bottom = 8.dp)
     )
@@ -411,25 +395,30 @@ private fun ListEditorDialog(
     onSave: (List<String>) -> Unit
 ) {
     var text by remember { mutableStateOf(initial.joinToString("\n")) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = {
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(180.dp),
-                placeholder = { Text(hint) },
-                shape = RoundedCornerShape(12.dp)
+    SuperDialog(
+        show = true,
+        title = title,
+        onDismissRequest = onDismiss
+    ) {
+        TextField(
+            value = text,
+            onValueChange = { text = it },
+            label = hint,
+            useLabelAsPlaceholder = true,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(180.dp)
+        )
+        Spacer(Modifier.height(14.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            TextButton(text = "取消", onClick = onDismiss, modifier = Modifier.weight(1f))
+            TextButton(
+                text = "保存",
+                onClick = {
+                    onSave(text.split("\n", "，", ",").map { it.trim() }.filter { it.isNotBlank() })
+                },
+                modifier = Modifier.weight(1f)
             )
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                onSave(text.split("\n", "，", ",").map { it.trim() }.filter { it.isNotBlank() })
-            }) { Text("保存") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
-    )
+        }
+    }
 }

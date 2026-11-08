@@ -11,15 +11,6 @@ import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Forum
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Person
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -28,7 +19,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
@@ -55,6 +45,12 @@ import com.forumassist.app.ui.screens.ThreadDetailScreen
 import com.forumassist.app.ui.screens.ThreadListScreen
 import com.forumassist.app.ui.screens.WebScreen
 import com.forumassist.app.ui.theme.ForumTheme
+import top.yukonga.miuix.kmp.basic.NavigationBar
+import top.yukonga.miuix.kmp.basic.NavigationBarItem
+import top.yukonga.miuix.kmp.basic.Scaffold
+import top.yukonga.miuix.kmp.basic.SnackbarHost
+import top.yukonga.miuix.kmp.basic.SnackbarHostState
+import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 private data class Tab(val route: String, val label: String, val icon: ImageVector)
 
@@ -102,12 +98,12 @@ fun AppRoot() {
 
         Scaffold(
             snackbarHost = { SnackbarHost(snackbar) },
-            containerColor = MaterialTheme.colorScheme.background,
+            containerColor = MiuixTheme.colorScheme.background,
             bottomBar = {
                 if (showBar) {
                     NavigationBar(
-                        containerColor = MaterialTheme.colorScheme.surface,
-                        tonalElevation = 0.dp
+                        color = MiuixTheme.colorScheme.surfaceContainer,
+                        showDivider = true
                     ) {
                         tabs.forEach { tab ->
                             val selected = route == tab.route
@@ -122,15 +118,8 @@ fun AppRoot() {
                                         }
                                     }
                                 },
-                                icon = { Icon(tab.icon, tab.label) },
-                                label = { Text(tab.label, style = MaterialTheme.typography.labelSmall) },
-                                colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = MaterialTheme.colorScheme.primary,
-                                    selectedTextColor = MaterialTheme.colorScheme.primary,
-                                    indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-                                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                icon = tab.icon,
+                                label = tab.label
                             )
                         }
                     }

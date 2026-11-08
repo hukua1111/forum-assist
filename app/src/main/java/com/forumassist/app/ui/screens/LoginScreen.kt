@@ -24,15 +24,16 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.VerifiedUser
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import top.yukonga.miuix.kmp.basic.Button
+import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
+import top.yukonga.miuix.kmp.basic.Icon
+import top.yukonga.miuix.kmp.basic.ProgressIndicatorDefaults
+import top.yukonga.miuix.kmp.basic.IconButton
+import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.basic.TextField
+import top.yukonga.miuix.kmp.basic.Surface
+import top.yukonga.miuix.kmp.basic.Text
+import com.forumassist.app.ui.components.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -92,9 +93,9 @@ fun LoginScreen(state: AppState, site: Site, onBack: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回", tint = MaterialTheme.colorScheme.onBackground)
+                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回", tint = MiuixTheme.colorScheme.onBackground)
             }
-            Text("账号", style = MaterialTheme.typography.titleLarge)
+            Text("账号", style = MiuixTheme.textStyles.title3)
         }
 
         Column(
@@ -107,11 +108,11 @@ fun LoginScreen(state: AppState, site: Site, onBack: () -> Unit) {
                 SiteAvatar(current.name, current.color, size = 52.dp, radius = 16.dp)
                 Spacer(Modifier.width(14.dp))
                 Column {
-                    Text(current.name, style = MaterialTheme.typography.titleMedium)
+                    Text(current.name, style = MiuixTheme.textStyles.headline1)
                     Text(
                         current.host,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        style = MiuixTheme.textStyles.footnote2,
+                        color = MiuixTheme.colorScheme.onBackgroundVariant
                     )
                 }
             }
@@ -135,27 +136,26 @@ fun LoginScreen(state: AppState, site: Site, onBack: () -> Unit) {
                 Spacer(Modifier.height(16.dp))
                 Text(
                     "退出后，收藏与离线内容仍保留在本机。",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    style = MiuixTheme.textStyles.footnote2,
+                    color = MiuixTheme.colorScheme.onBackgroundVariant
                 )
                 return@Column
             }
 
-            OutlinedTextField(
+            TextField(
                 value = username,
                 onValueChange = { username = it; error = null },
-                label = { Text("用户名 / 邮箱") },
+                label = "用户名 / 邮箱",
                 leadingIcon = { Icon(Icons.Outlined.Person, null, Modifier.size(18.dp)) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp)
             )
             Spacer(Modifier.height(12.dp))
-            OutlinedTextField(
+            TextField(
                 value = password,
                 onValueChange = { password = it; error = null },
-                label = { Text("密码") },
+                label = "密码",
                 leadingIcon = { Icon(Icons.Outlined.Lock, null, Modifier.size(18.dp)) },
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
@@ -164,21 +164,19 @@ fun LoginScreen(state: AppState, site: Site, onBack: () -> Unit) {
                     imeAction = ImeAction.Done
                 ),
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp)
             )
 
             if (captchaHash != null) {
                 Spacer(Modifier.height(12.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(
+                    TextField(
                         value = captchaCode,
                         onValueChange = { captchaCode = it; error = null },
-                        label = { Text("验证码") },
+                        label = "验证码",
                         leadingIcon = { Icon(Icons.Outlined.VerifiedUser, null, Modifier.size(18.dp)) },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                         modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(14.dp)
                     )
                     Spacer(Modifier.width(10.dp))
                     if (captchaBitmap != null) {
@@ -192,20 +190,20 @@ fun LoginScreen(state: AppState, site: Site, onBack: () -> Unit) {
                                 .clickable { captchaCode = ""; refreshCaptcha() }
                         )
                     } else {
-                        TextButton(onClick = { refreshCaptcha() }) { Text("点击获取") }
+                        TextButton(text = "点击获取", onClick = { refreshCaptcha() })
                     }
                 }
                 Text(
                     "看不清？点图片换一张",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MiuixTheme.textStyles.footnote2,
+                    color = MiuixTheme.colorScheme.onBackgroundVariant,
                     modifier = Modifier.padding(top = 4.dp)
                 )
             }
 
             error?.let {
                 Spacer(Modifier.height(10.dp))
-                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
+                Text(it, color = MiuixTheme.colorScheme.error, style = MiuixTheme.textStyles.footnote1)
             }
 
             Spacer(Modifier.height(18.dp))
@@ -237,13 +235,15 @@ fun LoginScreen(state: AppState, site: Site, onBack: () -> Unit) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(48.dp),
-                shape = RoundedCornerShape(14.dp)
+                cornerRadius = 14.dp
             ) {
                 if (busy) {
                     CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp),
+                        size = 18.dp,
                         strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.onPrimary
+                        colors = ProgressIndicatorDefaults.progressIndicatorColors(
+                            foregroundColor = MiuixTheme.colorScheme.onPrimary
+                        )
                     )
                     Spacer(Modifier.width(8.dp))
                 }
@@ -252,15 +252,14 @@ fun LoginScreen(state: AppState, site: Site, onBack: () -> Unit) {
 
             Spacer(Modifier.height(16.dp))
             Surface(
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                shape = RoundedCornerShape(12.dp)
+                color = MiuixTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.6f),
             ) {
                 Text(
                     "说明：站点开启图片验证码时会自动显示验证码输入框；" +
                         "遇到安全问题（密保提问）请改用网页模式登录。" +
                         "登录状态仅保存在本机，不会上传到任何服务器。",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MiuixTheme.textStyles.footnote2,
+                    color = MiuixTheme.colorScheme.onBackgroundVariant,
                     modifier = Modifier.padding(12.dp)
                 )
             }

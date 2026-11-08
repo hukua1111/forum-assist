@@ -28,12 +28,12 @@ import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Forum
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.Visibility
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
+import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
+import top.yukonga.miuix.kmp.basic.Icon
+import top.yukonga.miuix.kmp.basic.IconButton
+import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.basic.Surface
+import top.yukonga.miuix.kmp.basic.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -105,7 +105,7 @@ fun BoardsScreen(
             IconButton(onClick = onBack) {
                 Icon(
                     Icons.AutoMirrored.Rounded.ArrowBack, "返回",
-                    tint = MaterialTheme.colorScheme.onBackground
+                    tint = MiuixTheme.colorScheme.onBackground
                 )
             }
             SiteAvatar(site.name, site.color, size = 34.dp, radius = 10.dp)
@@ -113,28 +113,28 @@ fun BoardsScreen(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = site.name,
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MiuixTheme.textStyles.headline1,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
                     text = site.host,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MiuixTheme.textStyles.footnote2,
+                    color = MiuixTheme.colorScheme.onBackgroundVariant,
                     maxLines = 1
                 )
             }
             IconButton(onClick = onSearch) {
                 Icon(
                     Icons.Outlined.Search, "搜索",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    tint = MiuixTheme.colorScheme.onBackgroundVariant,
                     modifier = Modifier.size(20.dp)
                 )
             }
             IconButton(onClick = onOpenWeb) {
                 Icon(
                     Icons.Outlined.Language, "网页版",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    tint = MiuixTheme.colorScheme.onBackgroundVariant,
                     modifier = Modifier.size(20.dp)
                 )
             }
@@ -161,8 +161,8 @@ fun BoardsScreen(
                 item {
                     Text(
                         text = "版块  ·  ${boards.size}",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MiuixTheme.textStyles.footnote1,
+                        color = MiuixTheme.colorScheme.onBackgroundVariant,
                         modifier = Modifier.padding(start = 4.dp, bottom = 2.dp)
                     )
                 }
@@ -183,8 +183,8 @@ fun BoardsScreen(
                     item {
                         Text(
                             text = "已屏蔽 · ${hiddenBoards.size}",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MiuixTheme.textStyles.footnote1,
+                            color = MiuixTheme.colorScheme.onBackgroundVariant,
                             modifier = Modifier.padding(start = 4.dp, top = 10.dp, bottom = 2.dp)
                         )
                     }
@@ -221,10 +221,10 @@ private fun BoardRow(
             .clip(RoundedCornerShape(16.dp))
             .clickable(enabled = !blocked) { onOpen() },
         shape = RoundedCornerShape(16.dp),
-        color = if (blocked) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
-        else MaterialTheme.colorScheme.surface,
+        color = if (blocked) MiuixTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.45f)
+        else MiuixTheme.colorScheme.surfaceContainer,
         border = androidx.compose.foundation.BorderStroke(
-            1.dp, MaterialTheme.colorScheme.outlineVariant
+            1.dp, MiuixTheme.colorScheme.dividerLine
         )
     ) {
         Row(
@@ -248,15 +248,15 @@ private fun BoardRow(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = board.name,
-                    style = MaterialTheme.typography.titleSmall,
+                    style = MiuixTheme.textStyles.subtitle,
                     fontWeight = FontWeight.SemiBold,
-                    color = if (blocked) MaterialTheme.colorScheme.onSurfaceVariant
-                    else MaterialTheme.colorScheme.onSurface
+                    color = if (blocked) MiuixTheme.colorScheme.onBackgroundVariant
+                    else MiuixTheme.colorScheme.onBackground
                 )
                 Text(
                     text = if (blocked) "已屏蔽，不显示在列表中" else board.desc,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MiuixTheme.textStyles.footnote2,
+                    color = MiuixTheme.colorScheme.onBackgroundVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -265,12 +265,12 @@ private fun BoardRow(
                 Box(
                     modifier = Modifier
                         .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .background(MiuixTheme.colorScheme.surfaceContainerHigh)
                 ) {
                     Text(
                         text = "今日 ${board.todayPosts}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MiuixTheme.textStyles.footnote2,
+                        color = MiuixTheme.colorScheme.onBackgroundVariant,
                         modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
                     )
                 }
@@ -280,7 +280,7 @@ private fun BoardRow(
                     Icon(
                         imageVector = if (pinned) Icons.Rounded.Star else Icons.Outlined.StarBorder,
                         contentDescription = if (pinned) "取消固定到底栏" else "固定到底栏板块",
-                        tint = if (pinned) Color(siteColor) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        tint = if (pinned) Color(siteColor) else MiuixTheme.colorScheme.onBackgroundVariant.copy(alpha = 0.7f),
                         modifier = Modifier.size(19.dp)
                     )
                 }
@@ -289,14 +289,14 @@ private fun BoardRow(
                 Icon(
                     imageVector = if (blocked) Icons.Rounded.Visibility else Icons.Outlined.VisibilityOff,
                     contentDescription = if (blocked) "恢复该版块" else "屏蔽该版块",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    tint = MiuixTheme.colorScheme.onBackgroundVariant.copy(alpha = 0.7f),
                     modifier = Modifier.size(18.dp)
                 )
             }
             if (!blocked) {
                 Icon(
                     Icons.Rounded.ChevronRight, null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                    tint = MiuixTheme.colorScheme.onBackgroundVariant.copy(alpha = 0.5f),
                     modifier = Modifier.size(18.dp)
                 )
             }

@@ -27,12 +27,12 @@ import androidx.compose.material.icons.outlined.CleaningServices
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material.icons.rounded.Refresh
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
+import top.yukonga.miuix.kmp.basic.Icon
+import top.yukonga.miuix.kmp.basic.IconButton
+import top.yukonga.miuix.kmp.basic.LinearProgressIndicator
+import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.basic.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -80,9 +80,9 @@ fun WebScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = onBack) {
-                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回", tint = MaterialTheme.colorScheme.onBackground)
+                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回", tint = MiuixTheme.colorScheme.onBackground)
                 }
-                Text("演示论坛", style = MaterialTheme.typography.titleLarge)
+                Text("演示论坛", style = MiuixTheme.textStyles.title3)
             }
             com.forumassist.app.ui.components.EmptyState(
                 title = "演示站点没有对应网页",
@@ -119,17 +119,17 @@ fun WebScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回", tint = MaterialTheme.colorScheme.onBackground)
+                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回", tint = MiuixTheme.colorScheme.onBackground)
             }
             Text(
                 text = pageTitle,
-                style = MaterialTheme.typography.titleSmall,
+                style = MiuixTheme.textStyles.subtitle,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f)
             )
             IconButton(onClick = { webView?.reload() }) {
-                Icon(Icons.Rounded.Refresh, "刷新", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
+                Icon(Icons.Rounded.Refresh, "刷新", tint = MiuixTheme.colorScheme.onBackgroundVariant, modifier = Modifier.size(20.dp))
             }
             IconButton(onClick = {
                 // 清除本站网页 Cookie 后重新加载：用于登录状态错乱（如验证码一直报错）
@@ -143,20 +143,20 @@ fun WebScreen(
                 Icon(
                     Icons.Outlined.CleaningServices,
                     "清除本站登录状态",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    tint = MiuixTheme.colorScheme.onBackgroundVariant,
                     modifier = Modifier.size(19.dp)
                 )
             }
             IconButton(onClick = {
                 runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
             }) {
-                Icon(Icons.Outlined.OpenInNew, "浏览器打开", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(19.dp))
+                Icon(Icons.Outlined.OpenInNew, "浏览器打开", tint = MiuixTheme.colorScheme.onBackgroundVariant, modifier = Modifier.size(19.dp))
             }
         }
 
         if (progress in 1..99) {
             LinearProgressIndicator(
-                progress = { progress / 100f },
+                progress = progress / 100f,
                 modifier = Modifier.fillMaxWidth()
             )
         }

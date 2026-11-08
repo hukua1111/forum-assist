@@ -19,14 +19,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Send
-import androidx.compose.material3.Button
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import top.yukonga.miuix.kmp.basic.Button
+import top.yukonga.miuix.kmp.basic.Icon
+import top.yukonga.miuix.kmp.basic.IconButton
+import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.basic.TextField
+import top.yukonga.miuix.kmp.basic.Surface
+import top.yukonga.miuix.kmp.basic.Text
+import com.forumassist.app.ui.components.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -72,17 +72,17 @@ fun ComposeScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回", tint = MaterialTheme.colorScheme.onBackground)
+                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回", tint = MiuixTheme.colorScheme.onBackground)
             }
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = if (isReply) "回复帖子" else "发表新帖",
-                    style = MaterialTheme.typography.titleMedium
+                    style = MiuixTheme.textStyles.headline1
                 )
                 Text(
                     text = site.name,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    style = MiuixTheme.textStyles.footnote2,
+                    color = MiuixTheme.colorScheme.onBackgroundVariant
                 )
             }
             Button(
@@ -109,7 +109,7 @@ fun ComposeScreen(
                     }
                 },
                 enabled = !busy && canPost,
-                shape = RoundedCornerShape(12.dp)
+                cornerRadius = 12.dp
             ) {
                 Icon(Icons.Rounded.Send, null, Modifier.size(15.dp))
                 Spacer(Modifier.width(5.dp))
@@ -125,7 +125,7 @@ fun ComposeScreen(
         ) {
             if (!canPost) {
                 Surface(
-                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f),
+                    color = MiuixTheme.colorScheme.errorContainer.copy(alpha = 0.35f),
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
@@ -135,13 +135,13 @@ fun ComposeScreen(
                     ) {
                         Text(
                             "登录后才能发帖或回复",
-                            style = MaterialTheme.typography.labelMedium,
+                            style = MiuixTheme.textStyles.footnote1,
                             modifier = Modifier.weight(1f)
                         )
                         Text(
                             "去登录",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary,
+                            style = MiuixTheme.textStyles.footnote1,
+                            color = MiuixTheme.colorScheme.primary,
                             fontWeight = FontWeight.SemiBold,
                             modifier = Modifier.clickable(onClick = onLogin)
                         )
@@ -152,14 +152,14 @@ fun ComposeScreen(
 
             if (isReply && quotedTitle.isNotBlank()) {
                 Surface(
-                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    color = MiuixTheme.colorScheme.surfaceContainerHigh,
                     shape = RoundedCornerShape(10.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
                         text = "回复：$quotedTitle",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MiuixTheme.textStyles.footnote1,
+                        color = MiuixTheme.colorScheme.onBackgroundVariant,
                         modifier = Modifier.padding(10.dp),
                         maxLines = 1
                     )
@@ -168,52 +168,50 @@ fun ComposeScreen(
             }
 
             if (!isReply) {
-                OutlinedTextField(
+                TextField(
                     value = subject,
                     onValueChange = { subject = it },
-                    label = { Text("标题") },
+                    label = "标题",
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp)
+                    modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(12.dp))
             }
 
-            OutlinedTextField(
+            TextField(
                 value = content,
                 onValueChange = { content = it },
-                placeholder = { Text("支持论坛原生格式，可粘贴图片链接…") },
+                label = "支持论坛原生格式，可粘贴图片链接…",
+                useLabelAsPlaceholder = true,
+                minLines = 8,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 200.dp),
-                shape = RoundedCornerShape(14.dp)
+                    .heightIn(min = 200.dp)
             )
 
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = "${content.length} 字",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    style = MiuixTheme.textStyles.footnote2,
+                    color = MiuixTheme.colorScheme.onBackgroundVariant
                 )
                 Spacer(Modifier.weight(1f))
                 listOf("😀", "👍", "😂", "🎉", "→").forEach { emoji ->
-                    TextButton(onClick = { content += emoji }) {
-                        Text(emoji, style = MaterialTheme.typography.bodyLarge)
-                    }
+                    TextButton(text = emoji, onClick = { content += emoji })
                 }
             }
 
             error?.let {
                 Spacer(Modifier.height(6.dp))
-                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
+                Text(it, color = MiuixTheme.colorScheme.error, style = MiuixTheme.textStyles.footnote1)
             }
 
             Spacer(Modifier.height(6.dp))
             Text(
                 "提示：图片暂不支持本地相册上传，可先上传到图床再粘贴链接。",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                style = MiuixTheme.textStyles.footnote2,
+                color = MiuixTheme.colorScheme.onBackgroundVariant.copy(alpha = 0.7f)
             )
         }
     }

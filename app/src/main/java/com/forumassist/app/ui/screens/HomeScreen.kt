@@ -18,20 +18,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.ExperimentalMaterialApi
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.WifiOff
-import androidx.compose.material.pullrefresh.PullRefreshIndicator
-import androidx.compose.material.pullrefresh.pullRefresh
-import androidx.compose.material.pullrefresh.rememberPullRefreshState
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -39,15 +29,21 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.forumassist.app.AppState
 import com.forumassist.app.data.ThreadSummary
 import com.forumassist.app.ui.components.EmptyState
 import com.forumassist.app.ui.components.ThreadCard
+import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
+import top.yukonga.miuix.kmp.basic.Icon
+import top.yukonga.miuix.kmp.basic.IconButton
+import top.yukonga.miuix.kmp.basic.PullToRefresh
+import top.yukonga.miuix.kmp.basic.TabRow
+import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.theme.MiuixTheme
 
-@OptIn(ExperimentalMaterialApi::class)
 @Composable
 fun HomeScreen(
     state: AppState,
@@ -56,10 +52,6 @@ fun HomeScreen(
     onOpenSites: () -> Unit
 ) {
     val listState = rememberLazyListState()
-    val pullState = rememberPullRefreshState(
-        refreshing = state.feedRefreshing,
-        onRefresh = { state.loadFeed(reset = true) }
-    )
 
     LaunchedEffect(state.feedTab) {
         if (state.feed.isEmpty() && !state.feedLoading) state.loadFeed(reset = true)
@@ -79,15 +71,26 @@ fun HomeScreen(
         if (shouldLoadMore) state.loadMoreFeed()
     }
 
-    Box(
+    Column(
         modifier = Modifier
             .fillMaxSize()
-            .pullRefresh(pullState)
+            .padding(bottom = 0.dp)
     ) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            HomeHeader(state, onSearch, onOpenSites)
-            FeedTabs(state)
+        HomeHeader(state, onSearch, onOpenSites)
+        TabRow(
+            tabs = listOf("最新主题", "最新回复", "热帖"),
+            selectedTabIndex = state.feedTab,
+            onTabSelected = { state.switchTab(it) },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+        )
 
+        PullToRefresh(
+            isRefreshing = state.feedRefreshing,
+            onRefresh = { state.loadFeed(reset = true) },
+            modifier = Modifier.fillMaxSize()
+        ) {
             when {
                 state.feedLoading && state.feed.isEmpty() -> LoadingBlock()
                 state.feed.isEmpty() && state.feedError != null -> EmptyState(
@@ -130,10 +133,7 @@ fun HomeScreen(
                                     .padding(20.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(22.dp),
-                                    strokeWidth = 2.dp
-                                )
+                                CircularProgressIndicator(size = 22.dp, strokeWidth = 2.dp)
                             }
                         }
                     }
@@ -141,110 +141,73 @@ fun HomeScreen(
                         item(key = "end") {
                             Text(
                                 text = "— 已经到底了 —",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MiuixTheme.textStyles.footnote2,
+                                color = MiuixTheme.colorScheme.onBackgroundVariant,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(vertical = 18.dp),
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                textAlign = TextAlign.Center
                             )
                         }
                     }
                 }
             }
         }
-
-        PullRefreshIndicator(
-            refreshing = state.feedRefreshing,
-            state = pullState,
-            modifier = Modifier.align(Alignment.TopCenter),
-            contentColor = MaterialTheme.colorScheme.primary
-        )
     }
 }
 
 @Composable
 private fun HomeHeader(state: AppState, onSearch: () -> Unit, onOpenSites: () -> Unit) {
+    val cs = MiuixTheme.colorScheme
     val enabled = state.sites.count { it.enabled }
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 18.dp, end = 8.dp, top = 12.dp, bottom = 6.dp),
+            .padding(start = 18.dp, end = 8.dp, top = 12.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = "论坛助手",
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onBackground
+                style = MiuixTheme.textStyles.title1,
+                color = cs.onBackground
             )
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.clickable(onClick = onOpenSites)
+                modifier = Modifier
+                    .padding(top = 2.dp)
+                    .clickable(onClick = onOpenSites)
             ) {
                 Text(
                     text = "$enabled 个站点聚合中",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    style = MiuixTheme.textStyles.footnote1,
+                    color = cs.onBackgroundVariant
                 )
                 Text(
                     text = "  ·  管理",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Medium
+                    style = MiuixTheme.textStyles.footnote1,
+                    color = cs.primary
                 )
             }
         }
         IconButton(onClick = onSearch) {
-            Icon(Icons.Outlined.Search, contentDescription = "搜索", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Icon(Icons.Outlined.Search, contentDescription = "搜索", tint = cs.onBackgroundVariant)
         }
         IconButton(onClick = { state.loadFeed(reset = true) }) {
-            Icon(Icons.Rounded.Refresh, contentDescription = "刷新", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
-}
-
-@Composable
-private fun FeedTabs(state: AppState) {
-    val tabs = listOf("最新主题", "最新回复", "热帖")
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 6.dp)
-            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp))
-            .padding(3.dp),
-        horizontalArrangement = Arrangement.spacedBy(3.dp)
-    ) {
-        tabs.forEachIndexed { index, label ->
-            val selected = state.feedTab == index
-            Surface(
-                modifier = Modifier
-                    .weight(1f)
-                    .clickable { state.switchTab(index) },
-                shape = RoundedCornerShape(9.dp),
-                color = if (selected) MaterialTheme.colorScheme.surface else Color.Transparent,
-                shadowElevation = if (selected) 1.dp else 0.dp
-            ) {
-                Text(
-                    text = label,
-                    modifier = Modifier.padding(vertical = 8.dp),
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = if (selected) MaterialTheme.colorScheme.onSurface
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
-                )
-            }
+            Icon(Icons.Rounded.Refresh, contentDescription = "刷新", tint = cs.onBackgroundVariant)
         }
     }
 }
 
 @Composable
 private fun SoftNotice(text: String, onRetry: () -> Unit) {
-    Surface(
-        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.07f),
-        shape = RoundedCornerShape(12.dp),
-        modifier = Modifier.fillMaxWidth()
+    val cs = MiuixTheme.colorScheme
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 4.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(cs.primary.copy(alpha = 0.08f))
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
@@ -254,20 +217,19 @@ private fun SoftNotice(text: String, onRetry: () -> Unit) {
                 Icons.Rounded.WifiOff,
                 contentDescription = null,
                 modifier = Modifier.size(15.dp),
-                tint = MaterialTheme.colorScheme.primary
+                tint = cs.primary
             )
             Spacer(Modifier.width(8.dp))
             Text(
                 text = text,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MiuixTheme.textStyles.footnote1,
+                color = cs.onBackgroundVariant,
                 modifier = Modifier.weight(1f)
             )
             Text(
                 text = "重试",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary,
-                fontWeight = FontWeight.SemiBold,
+                style = MiuixTheme.textStyles.footnote1,
+                color = cs.primary,
                 modifier = Modifier
                     .clickable(onClick = onRetry)
                     .padding(start = 8.dp, top = 2.dp, bottom = 2.dp)
@@ -283,12 +245,12 @@ private fun LoadingBlock() {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        CircularProgressIndicator(modifier = Modifier.size(26.dp), strokeWidth = 2.5.dp)
+        CircularProgressIndicator(size = 26.dp, strokeWidth = 2.5.dp)
         Spacer(Modifier.height(14.dp))
         Text(
             text = "正在聚合各站点最新内容…",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            style = MiuixTheme.textStyles.footnote1,
+            color = MiuixTheme.colorScheme.onBackgroundVariant
         )
     }
 }

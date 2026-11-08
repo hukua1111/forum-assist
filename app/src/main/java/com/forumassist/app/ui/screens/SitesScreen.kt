@@ -26,17 +26,17 @@ import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Login
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.rounded.ChevronRight
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import top.yukonga.miuix.kmp.basic.Icon
+import top.yukonga.miuix.kmp.basic.IconButton
+import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.basic.TextField
+import top.yukonga.miuix.kmp.extra.SuperDialog
+import top.yukonga.miuix.kmp.basic.Surface
+import top.yukonga.miuix.kmp.basic.Switch
+import top.yukonga.miuix.kmp.basic.Text
+import com.forumassist.app.ui.components.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -74,7 +74,7 @@ fun SitesScreen(
                 Surface(
                     onClick = { showAdd = true },
                     shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.primary
+                    color = MiuixTheme.colorScheme.primary
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
@@ -82,14 +82,14 @@ fun SitesScreen(
                     ) {
                         Icon(
                             Icons.Outlined.Add, null,
-                            tint = MaterialTheme.colorScheme.onPrimary,
+                            tint = MiuixTheme.colorScheme.onPrimary,
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(Modifier.width(4.dp))
                         Text(
                             "添加",
-                            color = MaterialTheme.colorScheme.onPrimary,
-                            style = MaterialTheme.typography.labelLarge
+                            color = MiuixTheme.colorScheme.onPrimary,
+                            style = MiuixTheme.textStyles.footnote1
                         )
                     }
                 }
@@ -118,7 +118,7 @@ fun SitesScreen(
                         .fillMaxWidth()
                         .clickable { showAdd = true },
                     shape = RoundedCornerShape(18.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    color = MiuixTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.5f)
                 ) {
                     Row(
                         modifier = Modifier.padding(16.dp),
@@ -127,14 +127,14 @@ fun SitesScreen(
                     ) {
                         Icon(
                             Icons.Outlined.Add, null,
-                            tint = MaterialTheme.colorScheme.primary,
+                            tint = MiuixTheme.colorScheme.primary,
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(Modifier.width(8.dp))
                         Text(
                             "添加新论坛（粘贴网址即可自动识别）",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary
+                            style = MiuixTheme.textStyles.footnote1,
+                            color = MiuixTheme.colorScheme.primary
                         )
                     }
                 }
@@ -160,38 +160,38 @@ private fun SiteRow(
     var addressInput by remember { mutableStateOf(site.addressPage) }
 
     if (showAddressDialog) {
-        AlertDialog(
-            onDismissRequest = { showAddressDialog = false },
-            title = { Text("地址发布页") },
-            text = {
-                Column {
-                    Text(
-                        "填写该站点的地址发布页网址。域名更换时，App 会从这里自动找最新可用地址。",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    OutlinedTextField(
-                        value = addressInput,
-                        onValueChange = { addressInput = it },
-                        label = { Text("例如 https://sxsy.org/") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp)
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    state.updateSite(site.copy(addressPage = addressInput.trim()))
-                    showAddressDialog = false
-                    state.notify(if (addressInput.isBlank()) "已清除地址发布页" else "已保存地址发布页")
-                }) { Text("保存") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showAddressDialog = false }) { Text("取消") }
+        SuperDialog(
+            show = true,
+            title = "地址发布页",
+            summary = "填写该站点的地址发布页网址。域名更换时，App 会从这里自动找最新可用地址。",
+            onDismissRequest = { showAddressDialog = false }
+        ) {
+            TextField(
+                value = addressInput,
+                onValueChange = { addressInput = it },
+                label = "例如 https://sxsy.org/",
+                useLabelAsPlaceholder = true,
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(14.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                TextButton(
+                    text = "取消",
+                    onClick = { showAddressDialog = false },
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(
+                    text = "保存",
+                    onClick = {
+                        state.updateSite(site.copy(addressPage = addressInput.trim()))
+                        showAddressDialog = false
+                        state.notify(if (addressInput.isBlank()) "已清除地址发布页" else "已保存地址发布页")
+                    },
+                    modifier = Modifier.weight(1f)
+                )
             }
-        )
+        }
     }
 
     Surface(
@@ -200,8 +200,8 @@ private fun SiteRow(
             .clip(RoundedCornerShape(18.dp))
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        color = MiuixTheme.colorScheme.surfaceContainer,
+        border = androidx.compose.foundation.BorderStroke(1.dp, MiuixTheme.colorScheme.dividerLine)
     ) {
         Row(
             modifier = Modifier.padding(14.dp),
@@ -213,8 +213,8 @@ private fun SiteRow(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = site.name,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
+                        style = MiuixTheme.textStyles.headline1,
+                        color = MiuixTheme.colorScheme.onBackground,
                         maxLines = 1
                     )
                     Spacer(Modifier.width(6.dp))
@@ -224,13 +224,13 @@ private fun SiteRow(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = site.host,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MiuixTheme.textStyles.footnote1,
+                        color = MiuixTheme.colorScheme.onBackgroundVariant,
                         maxLines = 1
                     )
                     if (site.loggedIn) {
                         Spacer(Modifier.width(6.dp))
-                        TagPill("已登录 ${site.username ?: ""}", MaterialTheme.colorScheme.primary)
+                        TagPill("已登录 ${site.username ?: ""}", MiuixTheme.colorScheme.primary)
                     }
                 }
             }
@@ -242,7 +242,7 @@ private fun SiteRow(
                 IconButton(onClick = { menu = true }) {
                     Icon(
                         Icons.Outlined.MoreHoriz, null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        tint = MiuixTheme.colorScheme.onBackgroundVariant,
                         modifier = Modifier.size(18.dp)
                     )
                 }
@@ -293,47 +293,42 @@ private fun AddSiteDialog(state: AppState, onDismiss: () -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("添加论坛") },
-        text = {
-            Column {
-                Text(
-                    "粘贴论坛首页地址，App 会自动识别站点类型并抓取版块。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(14.dp))
-                OutlinedTextField(
-                    value = url,
-                    onValueChange = { url = it; error = null },
-                    label = { Text("论坛网址") },
-                    placeholder = { Text("https://bbs.example.com") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Uri,
-                        imeAction = ImeAction.Next
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp)
-                )
-                Spacer(Modifier.height(10.dp))
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("显示名称（可留空）") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp)
-                )
-                error?.let {
-                    Spacer(Modifier.height(10.dp))
-                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
-                }
-            }
-        },
-        confirmButton = {
+    SuperDialog(
+        show = true,
+        title = "添加论坛",
+        summary = "粘贴论坛首页地址，App 会自动识别站点类型并抓取版块。",
+        onDismissRequest = onDismiss
+    ) {
+        TextField(
+            value = url,
+            onValueChange = { url = it; error = null },
+            label = "https://bbs.example.com",
+            useLabelAsPlaceholder = true,
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Uri,
+                imeAction = ImeAction.Next
+            ),
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(10.dp))
+        TextField(
+            value = name,
+            onValueChange = { name = it },
+            label = "显示名称（可留空）",
+            useLabelAsPlaceholder = true,
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+        error?.let {
+            Spacer(Modifier.height(10.dp))
+            Text(it, color = MiuixTheme.colorScheme.error, style = MiuixTheme.textStyles.footnote1)
+        }
+        Spacer(Modifier.height(14.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            TextButton(text = "取消", onClick = onDismiss, modifier = Modifier.weight(1f))
             TextButton(
+                text = if (busy) "识别中…" else "添加",
                 enabled = !busy,
                 onClick = {
                     busy = true
@@ -342,9 +337,9 @@ private fun AddSiteDialog(state: AppState, onDismiss: () -> Unit) {
                         res.onSuccess { onDismiss() }
                         res.onFailure { error = it.message }
                     }
-                }
-            ) { Text(if (busy) "识别中…" else "添加") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
-    )
+                },
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
 }
