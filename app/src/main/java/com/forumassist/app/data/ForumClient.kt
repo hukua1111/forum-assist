@@ -127,72 +127,104 @@ class ForumClient(private val http: Http) {
 
     suspend fun detail(site: Site, tid: String, page: Int = 1): ThreadDetail? =
         withContext(Dispatchers.IO) {
-            val url = pageUrl(site, "forum.php?mod=viewthread&tid=$tid", page)
-            val html = http.get(url) ?: return@withContext null
-            val doc = Jsoup.parse(html, site.baseUrl)
-            val title = doc.selectFirst("#thread_subject")?.text()
-                ?: doc.title().substringBefore(" - ").substringBefore("_").trim()
-            val posts = parsePosts(doc)
-            if (posts.isEmpty()) return@withContext null
+            // 依次尝试：手机版模板 → 桌面版模板 → Archiver 纯文本页。
+            // 部分站点（如尚香书苑）手机模板结构特殊或正文由脚本渲染，桌面版/归档版兜底。
+            val candidates = listOf(
+                pageUrl(site, "forum.php?mod=viewthread&tid=$tid", page),
+                u(site, "forum.php?mod=viewthread&tid=$tid" + if (page > 1) "&page=$page" else ""),
+                u(site, "archiver/tid-$tid.html" + if (page > 1) "?page=$page" else "")
+            ).distinct()
 
-            val totalPages = Regex("page=(\\d+)").findAll(html).mapNotNull { it.groupValues[1].toIntOrNull() }
-                .maxOrNull() ?: 1
-            val fid = Regex("fid=(\\d+)").find(html)?.groupValues?.get(1) ?: ""
-            val summary = ThreadSummary(
-                siteId = site.id,
-                tid = tid,
-                fid = fid,
-                title = title,
-                author = posts.first().author,
-                replies = Regex("(\\d+)\\s*(?:个)?回复").find(doc.text())?.groupValues?.get(1)?.toIntOrNull() ?: 0,
-                views = 0,
-                lastTime = posts.first().time,
-                ts = TimeUtil.parse(posts.first().time)
-            )
-            ThreadDetail(summary = summary, posts = posts, page = page, totalPages = totalPages)
+            for (url in candidates) {
+                val html = http.get(url) ?: continue
+                if (isLoginWall(html)) continue
+                val parsed = parseDetail(html, site, tid, page) ?: continue
+                if (parsed.posts.isNotEmpty()) return@withContext parsed
+            }
+            null
         }
+
+    /** 返回的是登录页（站点强制登录）时，换下一种模板再试 */
+    private fun isLoginWall(html: String): Boolean {
+        if (html.contains("postmessage") || html.contains("id=\"post_")) return false
+        if (html.contains("id='post_") || html.contains("class=\"t_f\"")) return false
+        return html.contains("member.php?mod=logging") || html.contains("name=\"formhash\"")
+    }
+
+    private fun parseDetail(html: String, site: Site, tid: String, page: Int): ThreadDetail? {
+        val doc = Jsoup.parse(html, site.baseUrl)
+        val title = doc.selectFirst("#thread_subject")?.text()?.trim()?.ifBlank { null }
+            ?: doc.selectFirst(".thread-title, .threadtitle, h1.ts, h1")?.text()?.trim()?.ifBlank { null }
+            ?: doc.title().substringBefore(" - ").substringBefore("_").trim()
+        val posts = parsePosts(doc)
+        if (posts.isEmpty()) return null
+
+        val totalPages = Regex("page=(\\d+)").findAll(html).mapNotNull { it.groupValues[1].toIntOrNull() }
+            .maxOrNull() ?: 1
+        val fid = Regex("fid=(\\d+)").find(html)?.groupValues?.get(1)
+            ?: Regex("fid-(\\d+)-").find(html)?.groupValues?.get(1) ?: ""
+        val summary = ThreadSummary(
+            siteId = site.id,
+            tid = tid,
+            fid = fid,
+            title = title.ifBlank { posts.first().author + " 的帖子" },
+            author = posts.first().author,
+            replies = Regex("(\\d+)\\s*(?:个)?回复").find(doc.text())?.groupValues?.get(1)?.toIntOrNull() ?: 0,
+            views = 0,
+            lastTime = posts.first().time,
+            ts = TimeUtil.parse(posts.first().time)
+        )
+        return ThreadDetail(summary = summary, posts = posts, page = page, totalPages = totalPages)
+    }
 
     private fun parsePosts(doc: Document): List<Post> {
-        val out = mutableListOf<Post>()
-
-        // 方案 A：Discuz 标准结构 div[id=post_xxx]
-        var nodes = doc.select("div[id^=post_]").toList().filter {
-            it.selectFirst(".t_f, .message, .postmessage, .pcb") != null
+        // 方案 A：标准/桌面模板 div[id=post_xxx]（含内嵌正文节点）
+        val nodes = doc.select("div[id^=post_]").toList().filter {
+            it.selectFirst(BODY_SELECTOR) != null
         }
-
-        // 方案 B：直接抓正文元素
-        if (nodes.isEmpty()) {
-            val bodies = doc.select("td.t_f, div.t_f, div.message, div.postmessage")
-            val seen = mutableSetOf<String>()
-            bodies.forEach { body ->
-                val holder = body.closest("div[id^=post_]")
-                    ?: body.closest(".plc")
-                    ?: body.closest(".postlist")
-                    ?: body.parent()?.parent()
-                if (holder == null) return@forEach
-                if (!seen.add(holder.cssSelector() + holder.text().take(20))) return@forEach
-                out.add(buildPost(holder, body, out.size, extracted = false))
+        if (nodes.isNotEmpty()) {
+            return nodes.mapIndexed { index, el ->
+                val body = el.selectFirst(BODY_SELECTOR) ?: el
+                buildPost(el, body, index, extracted = true)
             }
-            return out
         }
 
-        for ((index, el) in nodes.withIndex()) {
-            val body = el.selectFirst("td.t_f, div.t_f, div.message, div.postmessage, .pcb") ?: continue
-            out.add(buildPost(el, body, index, extracted = true))
+        // 方案 B：直接抓正文节点，再反推所属楼层容器
+        // 覆盖手机版 div.message、定制模板 .post-content / .article-content 等
+        val bodies = doc.select(BODY_SELECTOR).toList().filter { it.text().isNotBlank() }
+        val out = mutableListOf<Post>()
+        val seen = mutableSetOf<String>()
+        for (body in bodies) {
+            val holder = body.closest("div[id^=post_]")
+                ?: body.closest("div.plc, li.post, .post, .thread-post, .postlist > div")
+                ?: body.parent()?.parent()
+                ?: continue
+            val key = holder.text().take(40)
+            if (key.isBlank() || !seen.add(key)) continue
+            out.add(buildPost(holder, body, out.size, extracted = false))
         }
         return out
     }
 
+    private companion object {
+        /** 正文节点选择器，覆盖 Discuz 桌面版 / 手机版 / 常见定制模板 */
+        const val BODY_SELECTOR =
+            "td.t_f, div.t_f, div.message, div.postmessage, [id^=postmessage_], " +
+                ".article-content, .post-content, .thread-content, .post_message"
+    }
+
     private fun buildPost(holder: Element, body: Element, index: Int, extracted: Boolean): Post {
         val pid = holder.id().removePrefix("post_")
-        val author = holder.selectFirst("a.xw1, .authi a, .favatar a, .pi a")?.text()?.trim().orEmpty()
+        val author = holder.selectFirst("a.xw1, .authi a, .favatar a, .pi a, .username, .author a, .postinfo a")
+            ?.text()?.trim().orEmpty()
         val avatar = holder.selectFirst("img.avatar, .favatar img, .avatar img")?.attr("src").orEmpty()
             .let { if (it.startsWith("//")) "https:$it" else it }
         val uid = Regex("uid=(\\d+)").find(
             holder.selectFirst("a[href*=space-uid]")?.attr("href") ?: ""
         )?.groupValues?.get(1).orEmpty()
 
-        val infoText = holder.selectFirst(".pi, .authi, .favatar")?.text().orEmpty()
+        val infoText = holder.selectFirst(".pi, .authi, .favatar, .postinfo, .post-date, .time")
+            ?.text().orEmpty()
         val timeRaw = Regex(
             "\\d{4}-\\d{1,2}-\\d{1,2}(\\s+\\d{1,2}:\\d{1,2})?|\\d{1,2}-\\d{1,2}\\s+\\d{1,2}:\\d{1,2}|\\d+\\s*(?:分钟|小时|天)前|昨天"
         ).find(infoText)?.value.orEmpty()

@@ -20,20 +20,31 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Build debug APK
+      - name: Restore signing keystore
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/forum-assist.keystore"
+
+      - name: Build release APK (arm64-v8a)
+        env:
+          KEYSTORE_FILE: ${{ runner.temp }}/forum-assist.keystore
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          ./gradlew assembleRelease --no-daemon --stacktrace
+
+      - name: Rename APK
+        run: cp app/build/outputs/apk/release/app-release.apk "ForumAssist-${{ github.ref_name }}-arm64-v8a.apk"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: forum-assist-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: forum-assist-release-apk
+          path: ForumAssist-*.apk
 
       - name: Release on tag
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: app/build/outputs/apk/debug/app-debug.apk
+          files: ForumAssist-*.apk
           generate_release_notes: true

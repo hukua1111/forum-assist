@@ -11,15 +11,35 @@ android {
         applicationId = "com.forumassist.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 3
+        versionName = "1.2.0"
+
+        // 只打包 arm64-v8a（v8a），减小体积
+        ndk {
+            abiFilters += listOf("arm64-v8a")
+        }
+    }
+
+    signingConfigs {
+        // 固定签名：CI 通过环境变量注入，本地无环境变量时回落到 debug 签名
+        create("release") {
+            val path = System.getenv("KEYSTORE_FILE").orEmpty()
+            if (path.isNotBlank() && file(path).exists()) {
+                storeFile = file(path)
+                storePassword = System.getenv("KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("KEY_ALIAS") ?: "forumassist"
+                keyPassword = System.getenv("KEY_PASSWORD") ?: System.getenv("KEYSTORE_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (System.getenv("KEYSTORE_FILE").isNullOrBlank())
+                signingConfigs.getByName("debug")
+            else signingConfigs.getByName("release")
         }
     }
 
