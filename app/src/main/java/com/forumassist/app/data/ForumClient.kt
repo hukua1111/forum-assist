@@ -126,6 +126,10 @@ class ForumClient(private val http: Http) {
 
     // ---------------------------------------------------------------- 详情
 
+    /** 最近一次详情抓取的诊断信息，失败时展示给用户/日志排查 */
+    var lastDetailDebug: String = ""
+        private set
+
     suspend fun detail(site: Site, tid: String, page: Int = 1, rawUrl: String? = null): ThreadDetail? =
         withContext(Dispatchers.IO) {
             // 依次尝试：列表里的原始链接（可能带 _dsign 防采集签名）→ 手机版 → 桌面版 → Archiver。
@@ -140,12 +144,30 @@ class ForumClient(private val http: Http) {
                 add(u(site, "archiver/tid-$tid.html" + if (page > 1) "?page=$page" else ""))
             }.distinct()
 
+            val diag = StringBuilder()
             for (url in candidates) {
-                val html = http.get(url) ?: continue
-                if (isLoginWall(html)) continue
+                // 带 Referer，某些站点的防采集插件会校验来源
+                val html = http.get(url, referer = site.baseUrl.trimEnd('/') + "/forum.php")
+                if (html == null) {
+                    diag.append("· 请求失败 ").append(url.take(90)).append('\n')
+                    continue
+                }
+                val doc = Jsoup.parse(html, site.baseUrl)
+                val bodyCount = doc.select(BODY_SELECTOR).count { it.text().isNotBlank() }
+                diag.append("· ").append(url.substringAfter("://").take(70))
+                    .append(" | title=").append(doc.title().take(30))
+                    .append(" | 正文节点=").append(bodyCount).append('\n')
+                if (isLoginWall(html)) {
+                    diag.append("  → 判定为登录页，跳过\n")
+                    continue
+                }
                 val parsed = parseDetail(html, site, tid, page) ?: continue
-                if (parsed.posts.isNotEmpty()) return@withContext parsed
+                if (parsed.posts.isNotEmpty()) {
+                    lastDetailDebug = "成功：" + parsed.posts.size + " 楼"
+                    return@withContext parsed
+                }
             }
+            lastDetailDebug = diag.toString().ifBlank { "无可用请求" }
             null
         }
 

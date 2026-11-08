@@ -261,10 +261,18 @@ class AppState(context: Context) {
         client.threads(site, fid, page, orderBy)
     }
 
+    /** 详情抓取失败时的诊断信息（展示在详情页错误提示里，便于排查） */
+    var lastDetailError: String? = null
+        private set
+
     suspend fun detail(site: Site, tid: String, page: Int = 1, rawUrl: String? = null): ThreadDetail? =
         withContext(Dispatchers.IO) {
             if (site.isDemo) return@withContext Demo.detail(tid)
-            client.detail(site, tid, page, rawUrl) ?: store.loadOffline(site.id, tid)
+            val online = client.detail(site, tid, page, rawUrl)
+            if (online == null) {
+                lastDetailError = client.lastDetailDebug
+                store.loadOffline(site.id, tid)
+            } else online
         }
 
     suspend fun search(query: String): List<ThreadSummary> = withContext(Dispatchers.IO) {

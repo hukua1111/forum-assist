@@ -94,7 +94,10 @@ fun ThreadDetailScreen(
         loadedPage = 1
         loading = false
         if (detail == null) {
-            error = if (site.isDemo) "演示帖不存在" else "正文加载失败。该站点可能需要登录，或限制了外部访问。"
+            val diag = state.lastDetailError.orEmpty()
+            error = if (site.isDemo) "演示帖不存在"
+            else "正文加载失败。该站点可能需要登录，或限制了外部访问。" +
+                if (diag.isBlank()) "" else "\n\n诊断：\n$diag"
         } else {
             state.markRead(thread)
         }
