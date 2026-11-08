@@ -221,7 +221,7 @@ fun SettingsScreen(state: AppState, onBack: () -> Unit) {
             SoftCard(modifier = Modifier.padding(horizontal = 14.dp)) {
                 SettingRow(title = "版本", trailing = {
                     Text(
-                        "1.0.0",
+                        com.forumassist.app.BuildConfig.VERSION_NAME,
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
