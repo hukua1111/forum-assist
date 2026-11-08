@@ -315,7 +315,8 @@ class AppState(context: Context) {
     }
 
     fun logout(site: Site) {
-        store.clearCookiesFor(site)
+        // 同时清掉原生存储与网页模式的 Cookie，避免残留旧会话
+        http.clearAllCookiesFor(site)
         updateSite(site.copy(username = null))
         notify("已退出登录")
     }

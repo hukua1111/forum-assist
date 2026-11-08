@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.outlined.CleaningServices
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material.icons.rounded.Refresh
@@ -116,6 +117,22 @@ fun WebScreen(
                 Icon(Icons.Rounded.Refresh, "刷新", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
             }
             IconButton(onClick = {
+                // 清除本站网页 Cookie 后重新加载：用于登录状态错乱（如验证码一直报错）
+                val host = runCatching { Uri.parse(url).host }.getOrNull()
+                if (!host.isNullOrBlank()) {
+                    runCatching { com.forumassist.app.App.state.http.clearWebViewCookiesFor(host) }
+                    webView?.clearCache(true)
+                    webView?.reload()
+                }
+            }) {
+                Icon(
+                    Icons.Outlined.CleaningServices,
+                    "清除本站登录状态",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(19.dp)
+                )
+            }
+            IconButton(onClick = {
                 runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
             }) {
                 Icon(Icons.Outlined.OpenInNew, "浏览器打开", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(19.dp))
@@ -144,12 +161,14 @@ fun WebScreen(
                         settings.useWideViewPort = true
                         settings.builtInZoomControls = true
                         settings.displayZoomControls = false
-                        settings.userAgentString = settings.userAgentString +
-                            " ForumAssist/1.0"
+                        settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                        settings.databaseEnabled = true
                         CookieManager.getInstance().setAcceptCookie(true)
                         CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
-                        // 原生登录态 → WebView：打开网页模式前先带上已有 Cookie
-                        runCatching { com.forumassist.app.App.state.http.exportCookiesToWebView(url) }
+                        // 注意：不要在这里把原生 Cookie 注入 WebView。
+                        // Discuz 的验证码 hash / formhash 与 session cookie 绑定，
+                        // 注入同名 Cookie（domain/path 不同）会让站点读到旧会话，
+                        // 表现为「验证码输入正确却报验证码错误」。
                         webChromeClient = object : WebChromeClient() {
                             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                                 progress = newProgress

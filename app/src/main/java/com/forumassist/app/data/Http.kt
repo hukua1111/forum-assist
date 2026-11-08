@@ -168,19 +168,40 @@ class Http(store: Store) {
     }
 
     /**
-     * 把原生存储的登录 Cookie 写入系统 WebView，让网页模式也能复用原生登录态。
+     * 清除该站点的会话 Cookie（*_sid / sid）。
+     * 原生登录前调用，避免带上旧会话导致验证码 hash 与表单不匹配。
      */
-    fun exportCookiesToWebView(pageUrl: String) {
-        val httpUrl = pageUrl.toHttpUrlOrNull() ?: return
+    fun clearSessionCookies(site: Site) {
+        val host = runCatching { site.baseUrl.toHttpUrlOrNull()?.host }.getOrNull() ?: return
+        val all = store.cookies()
+        val kept = all.filterNot {
+            it.host == host && (it.name.endsWith("_sid") || it.name == "sid")
+        }
+        if (kept.size != all.size) store.saveCookies(kept)
+    }
+
+    /** 退出登录：同时清掉 OkHttp 存储与 WebView 里的该站 Cookie */
+    fun clearAllCookiesFor(site: Site) {
+        val host = runCatching { site.baseUrl.toHttpUrlOrNull()?.host }.getOrNull() ?: return
+        store.saveCookies(store.cookies().filterNot { it.host == host })
+        clearWebViewCookiesFor(host)
+    }
+
+    /** 只清 WebView 里该主机的 Cookie（不动原生登录态） */
+    fun clearWebViewCookiesFor(host: String) {
         val cm = android.webkit.CookieManager.getInstance()
-        jar.loadForRequest(httpUrl).forEach { c ->
-            runCatching {
-                val attrs = StringBuilder()
-                attrs.append("Path=/; Domain=").append(httpUrl.host)
-                if (c.secure) attrs.append("; Secure")
-                cm.setCookie(pageUrl, "${c.name}=${c.value}; $attrs")
+        val base = "https://$host/"
+        // 先把该主机现存 Cookie 逐个置空，再清一遍通用站点数据
+        runCatching { cm.getCookie(base) }.getOrNull().orEmpty().split(";").forEach { part ->
+            val name = part.substringBefore("=").trim()
+            if (name.isNotBlank()) {
+                // host-only 与 domain 两种作用域都尝试置空
+                listOf("", "; Domain=$host", "; Domain=.$host").forEach { scope ->
+                    runCatching { cm.setCookie(base, "$name=; Max-Age=0; Path=/$scope") }
+                }
             }
         }
+        runCatching { cm.setCookie(base, "expires=; Max-Age=0; Path=/") }
         cm.flush()
     }
 

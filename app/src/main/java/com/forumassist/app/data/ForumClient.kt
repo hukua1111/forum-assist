@@ -268,6 +268,7 @@ class ForumClient(private val http: Http) {
      * 注意：验证码与当前会话 Cookie 绑定，因此必须在同一 Http 实例下取图并提交。
      */
     suspend fun loginCaptcha(site: Site): LoginCaptcha? = withContext(Dispatchers.IO) {
+        http.clearSessionCookies(site)
         val loginUrl = u(site, "member.php?mod=logging&action=login&mobile=2")
         val html = http.get(loginUrl) ?: return@withContext null
         val hash = Regex("name=[\"']seccodehash[\"'][^>]*value=[\"']([^\"']+)[\"']")
