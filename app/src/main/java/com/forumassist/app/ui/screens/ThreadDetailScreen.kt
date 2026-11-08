@@ -42,17 +42,17 @@ import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.rounded.Send
-import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import top.yukonga.miuix.kmp.basic.HorizontalDivider
-import top.yukonga.miuix.kmp.basic.Icon
-import top.yukonga.miuix.kmp.basic.IconButton
-import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.basic.Surface
-import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.extra.SuperDialog
-import com.forumassist.app.ui.components.TextButton
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -260,12 +260,12 @@ fun ThreadDetailScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回", tint = MiuixTheme.colorScheme.onBackground)
+                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回", tint = MaterialTheme.colorScheme.onBackground)
             }
             Text(
                 text = site.name,
-                style = MiuixTheme.textStyles.subtitle,
-                color = MiuixTheme.colorScheme.onBackground,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onBackground,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f)
@@ -274,12 +274,12 @@ fun ThreadDetailScreen(
                 Icon(
                     imageVector = if (fav) Icons.Outlined.BookmarkAdded else Icons.Outlined.BookmarkAdd,
                     contentDescription = "收藏",
-                    tint = if (fav) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onBackgroundVariant
+                    tint = if (fav) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             Box {
                 IconButton(onClick = { menu = true }) {
-                    Icon(Icons.Outlined.MoreVert, "更多", tint = MiuixTheme.colorScheme.onBackgroundVariant)
+                    Icon(Icons.Outlined.MoreVert, "更多", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                     DropdownMenuItem(
@@ -388,15 +388,15 @@ fun ThreadDetailScreen(
                 Spacer(Modifier.height(10.dp))
                 Text(
                     text = thread.title,
-                    style = MiuixTheme.textStyles.title3,
+                    style = MaterialTheme.typography.headlineSmall,
                     lineHeight = 30.sp,
-                    color = MiuixTheme.colorScheme.onBackground
+                    color = MaterialTheme.colorScheme.onBackground
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
                     text = "${thread.author.ifBlank { "匿名" }}  ·  ${thread.replies} 回复  ·  ${thread.views} 浏览",
-                    style = MiuixTheme.textStyles.footnote2,
-                    color = MiuixTheme.colorScheme.onBackgroundVariant
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(22.dp))
                 // 骨架屏：先把「作者行 + 正文段落」的版式占住。
@@ -407,7 +407,7 @@ fun ThreadDetailScreen(
                         modifier = Modifier
                             .size(30.dp)
                             .clip(CircleShape)
-                            .background(MiuixTheme.colorScheme.onBackgroundVariant.copy(alpha = 0.12f))
+                            .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.12f))
                     )
                     Spacer(Modifier.width(10.dp))
                     SkeletonBar(width = 86.dp)
@@ -437,8 +437,8 @@ fun ThreadDetailScreen(
                     Spacer(Modifier.width(8.dp))
                     Text(
                         text = if (rendering) "正在用站内渲染读取页面…" else "正在读取帖子…",
-                        style = MiuixTheme.textStyles.footnote1,
-                        color = MiuixTheme.colorScheme.onBackgroundVariant
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 if (slowHint) {
@@ -446,7 +446,7 @@ fun ThreadDetailScreen(
                     TextButton(
                         onClick = onOpenWeb,
                         modifier = Modifier.align(Alignment.CenterHorizontally)
-                    ) { Text("网络有点慢，先用网页模式", style = MiuixTheme.textStyles.footnote2) }
+                    ) { Text("网络有点慢，先用网页模式", style = MaterialTheme.typography.labelSmall) }
                 }
                 Spacer(Modifier.height(26.dp))
             }
@@ -512,7 +512,7 @@ fun ThreadDetailScreen(
                             item(key = "pd-${post.pid}-${post.floor}") {
                                 HorizontalDivider(
                                     modifier = Modifier.padding(vertical = 6.dp),
-                                    color = MiuixTheme.colorScheme.dividerLine.copy(alpha = 0.6f)
+                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
                                 )
                             }
                         }
@@ -570,67 +570,57 @@ fun ThreadDetailScreen(
                 Toast.makeText(context, res.message, Toast.LENGTH_LONG).show()
             }
         }
-        SuperDialog(
-            show = true,
-            title = f.name,
-            summary = when {
-                downloading -> "正在下载，请稍候…"
-                pay -> "这个附件需要先购买" +
-                    (if (f.meta.isNotBlank()) "（${f.meta}）" else "") + "。\n" +
-                    "点「购买并下载」在站内打开购买页，买完点页面里的下载链接会直接存到这里；\n" +
-                    "也可以在那边买完返回，再点一次附件直接下载。"
-                else -> "保存到「设置 → 附件下载」里选的文件夹。\n" +
-                    "如果站点提示需要购买，先点「网页打开」买完再回来下载。"
+        AlertDialog(
+            onDismissRequest = { if (!downloading) pendingFile = null },
+            title = { Text(f.name, maxLines = 3, overflow = TextOverflow.Ellipsis) },
+            text = {
+                Text(
+                    when {
+                        downloading -> "正在下载，请稍候…"
+                        pay -> "这个附件需要先购买" +
+                            (if (f.meta.isNotBlank()) "（${f.meta}）" else "") + "。\n" +
+                            "点「购买并下载」在站内打开购买页，买完点页面里的下载链接会直接存到这里；\n" +
+                            "也可以在那边买完返回，再点一次附件直接下载。"
+                        else -> "保存到「设置 → 附件下载」里选的文件夹。\n" +
+                            "如果站点提示需要购买，先点「网页打开」买完再回来下载。"
+                    }
+                )
             },
-            onDismissRequest = { if (!downloading) pendingFile = null }
-        ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                // 小说站的正文经常整个放在 txt 附件里，先给一个「不用落盘直接看」的入口
-                if (TextFile.isText(f.name, f.url)) {
-                    TextButton(
-                        text = if (reading) "载入中…" else "在线阅读",
-                        enabled = !downloading && !reading,
-                        onClick = { openReader(f) },
-                        modifier = Modifier.weight(1f)
-                    )
-                }
+            confirmButton = {
                 if (pay) {
                     TextButton(
-                        text = "购买并下载",
                         enabled = !downloading,
                         onClick = {
                             val target = f
                             pendingFile = null
                             onOpenUrl(target.url)
-                        },
-                        modifier = Modifier.weight(1f)
-                    )
-                    TextButton(
-                        text = "直接下载",
-                        enabled = !downloading,
-                        onClick = { doDownload() },
-                        modifier = Modifier.weight(1f)
-                    )
+                        }
+                    ) { Text("购买并下载") }
                 } else {
-                    TextButton(
-                        text = if (downloading) "下载中…" else "下载",
-                        enabled = !downloading,
-                        onClick = doDownload,
-                        modifier = Modifier.weight(1f)
-                    )
-                    TextButton(
-                        text = "网页打开",
-                        onClick = {
-                            if (!downloading) {
-                                pendingFile = null
-                                onOpenUrl(f.url)
-                            }
-                        },
-                        modifier = Modifier.weight(1f)
-                    )
+                    TextButton(enabled = !downloading, onClick = doDownload) {
+                        Text(if (downloading) "下载中…" else "下载")
+                    }
+                }
+            },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    // 小说站的正文经常整个放在 txt 附件里，先给一个「不用落盘直接看」的入口
+                    if (TextFile.isText(f.name, f.url)) {
+                        TextButton(
+                            enabled = !downloading && !reading,
+                            onClick = { openReader(f) }
+                        ) { Text(if (reading) "载入中…" else "在线阅读") }
+                    }
+                    TextButton(onClick = {
+                        if (downloading) return@TextButton
+                        if (pay) doDownload() else {
+                            pendingFile = null
+                            onOpenUrl(f.url)
+                        }
+                    }) { Text(if (pay) "直接下载" else "网页打开") }
                 }
             }
-        }
+        )
     }
 
     reader?.let { (title, content) ->
@@ -655,9 +645,9 @@ private fun TxtAttachmentHint(file: Block.File, loading: Boolean, onRead: () -> 
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(14.dp),
-        color = MiuixTheme.colorScheme.primary.copy(alpha = 0.08f),
+        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
         border = androidx.compose.foundation.BorderStroke(
-            1.dp, MiuixTheme.colorScheme.primary.copy(alpha = 0.25f)
+            1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
         )
     ) {
         Row(
@@ -666,21 +656,21 @@ private fun TxtAttachmentHint(file: Block.File, loading: Boolean, onRead: () -> 
         ) {
             Icon(
                 Icons.Outlined.MenuBook, null,
-                tint = MiuixTheme.colorScheme.primary,
+                tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(20.dp)
             )
             Spacer(Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = "本帖正文在附件里",
-                    style = MiuixTheme.textStyles.subtitle,
+                    style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
-                    color = MiuixTheme.colorScheme.onBackground
+                    color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
                     text = TextFile.displayName(file.name) + if (file.needsPay) "（需先购买）" else "",
-                    style = MiuixTheme.textStyles.footnote2,
-                    color = MiuixTheme.colorScheme.onBackgroundVariant,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -710,9 +700,9 @@ private fun TextReaderDialog(
         onDismissRequest = onClose,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
-        Surface(modifier = Modifier.fillMaxSize(), color = MiuixTheme.colorScheme.background) {
+        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Column(modifier = Modifier.fillMaxSize()) {
-                Surface(color = MiuixTheme.colorScheme.surfaceContainer) {
+                Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -723,16 +713,16 @@ private fun TextReaderDialog(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = title,
-                                style = MiuixTheme.textStyles.subtitle,
+                                style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.SemiBold,
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis,
-                                color = MiuixTheme.colorScheme.onBackground
+                                color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
                                 text = "${content.length} 字 · 共 ${chunks.size} 段",
-                                style = MiuixTheme.textStyles.footnote2,
-                                color = MiuixTheme.colorScheme.onBackgroundVariant
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         IconButton(onClick = onCopy) {
@@ -741,7 +731,7 @@ private fun TextReaderDialog(
                         TextButton(onClick = onClose) { Text("关闭") }
                     }
                 }
-                HorizontalDivider(color = MiuixTheme.colorScheme.dividerLine.copy(alpha = 0.5f))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                 LazyColumn(
                     state = listState,
                     modifier = Modifier
@@ -752,9 +742,9 @@ private fun TextReaderDialog(
                     itemsIndexed(chunks, key = { i, _ -> i }) { _, chunk ->
                         Text(
                             text = chunk,
-                            style = MiuixTheme.textStyles.body2,
+                            style = MaterialTheme.typography.bodyLarge,
                             lineHeight = 28.sp,
-                            color = MiuixTheme.colorScheme.onBackground
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                     }
                 }
@@ -783,7 +773,7 @@ private fun SkeletonBar(width: Dp? = null, fraction: Float = 1f, height: Dp = 12
             .then(if (width != null) Modifier.width(width) else Modifier.fillMaxWidth(fraction))
             .height(height)
             .clip(RoundedCornerShape(6.dp))
-            .background(MiuixTheme.colorScheme.onBackgroundVariant.copy(alpha = alpha))
+            .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha))
     )
 }
 
@@ -807,35 +797,35 @@ private fun DetailHead(
         SelectionContainer {
             Text(
                 text = detail.summary.title.ifBlank { thread.title },
-                style = MiuixTheme.textStyles.title3,
+                style = MaterialTheme.typography.headlineSmall,
                 lineHeight = 30.sp,
-                color = MiuixTheme.colorScheme.onBackground
+                color = MaterialTheme.colorScheme.onBackground
             )
         }
         Spacer(Modifier.height(8.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text = "${detail.posts.size} 层楼",
-                style = MiuixTheme.textStyles.footnote2,
-                color = MiuixTheme.colorScheme.onBackgroundVariant
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
                 text = "  ·  ${thread.replies} 回复  ·  ${thread.views} 浏览",
-                style = MiuixTheme.textStyles.footnote2,
-                color = MiuixTheme.colorScheme.onBackgroundVariant
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             if (showAttCount) {
                 val att = detail.posts.sumOf { p -> p.blocks.count { it is Block.File } }
                 if (att > 0) {
                     Text(
                         text = "  ·  $att 个附件",
-                        style = MiuixTheme.textStyles.footnote2,
-                        color = MiuixTheme.colorScheme.onBackgroundVariant
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
             Spacer(Modifier.weight(1f))
-            if (offline) TagPill("已离线", MiuixTheme.colorScheme.primary)
+            if (offline) TagPill("已离线", MaterialTheme.colorScheme.primary)
         }
     }
 }
@@ -864,7 +854,7 @@ private fun PostHeadRow(post: Post, site: Site, accent: Color) {
         Spacer(Modifier.width(8.dp))
         Text(
             text = post.author,
-            style = MiuixTheme.textStyles.subtitle,
+            style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -879,8 +869,8 @@ private fun PostHeadRow(post: Post, site: Site, accent: Color) {
             text = listOf(post.time, if (post.floor > 0) "${post.floor}楼" else "")
                 .filter { it.isNotBlank() }
                 .joinToString("  ·  "),
-            style = MiuixTheme.textStyles.footnote2,
-            color = MiuixTheme.colorScheme.onBackgroundVariant
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }
@@ -890,8 +880,9 @@ private fun PostCard(post: Post, site: Site, accent: Color, onOpenUrl: (String) 
     val profile = site.profile
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        color = MiuixTheme.colorScheme.surfaceContainer,
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -912,7 +903,7 @@ private fun PostCard(post: Post, site: Site, accent: Color, onOpenUrl: (String) 
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             text = post.author,
-                            style = MiuixTheme.textStyles.subtitle,
+                            style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -925,14 +916,14 @@ private fun PostCard(post: Post, site: Site, accent: Color, onOpenUrl: (String) 
                     }
                     Text(
                         text = post.time.ifBlank { "—" },
-                        style = MiuixTheme.textStyles.footnote2,
-                        color = MiuixTheme.colorScheme.onBackgroundVariant
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 Text(
                     text = if (post.floor > 0) "${post.floor}楼" else "",
-                    style = MiuixTheme.textStyles.footnote2,
-                    color = MiuixTheme.colorScheme.onBackgroundVariant.copy(alpha = 0.7f)
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                 )
             }
 
@@ -962,8 +953,8 @@ private fun BlockContent(
     when (block) {
         is Block.Text -> Text(
             text = block.text,
-            style = MiuixTheme.textStyles.body2,
-            color = MiuixTheme.colorScheme.onBackground,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurface,
             lineHeight = 25.sp
         )
 
@@ -971,18 +962,18 @@ private fun BlockContent(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(10.dp))
-                .background(MiuixTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.6f))
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
         ) {
             Box(
                 modifier = Modifier
                     .width(3.dp)
                     .heightIn(min = 24.dp)
-                    .background(MiuixTheme.colorScheme.outline)
+                    .background(MaterialTheme.colorScheme.outline)
             )
             Text(
                 text = block.text,
-                style = MiuixTheme.textStyles.body2,
-                color = MiuixTheme.colorScheme.onBackgroundVariant,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(10.dp)
             )
         }
@@ -994,7 +985,7 @@ private fun BlockContent(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp))
-                    .background(MiuixTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.6f))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
                     .clickable {
                         // 默认走「下载」：带 Cookie 直接抓文件；需要购买的会明确提示，
                         // 用户可以在弹窗里改用网页模式去买。
@@ -1005,23 +996,23 @@ private fun BlockContent(
             ) {
             Icon(
                 Icons.Outlined.Download, "附件",
-                tint = MiuixTheme.colorScheme.primary,
+                tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(18.dp)
             )
             Spacer(Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = block.name,
-                    style = MiuixTheme.textStyles.body2,
-                    color = MiuixTheme.colorScheme.onBackground,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 3,
                     overflow = TextOverflow.Ellipsis
                 )
                 if (block.meta.isNotBlank()) {
                     Text(
                         text = block.meta,
-                        style = MiuixTheme.textStyles.footnote2,
-                        color = MiuixTheme.colorScheme.onBackgroundVariant
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
@@ -1030,15 +1021,15 @@ private fun BlockContent(
                 Spacer(Modifier.width(8.dp))
                 Surface(
                     shape = RoundedCornerShape(10.dp),
-                    color = MiuixTheme.colorScheme.primary.copy(alpha = 0.12f),
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
                     border = androidx.compose.foundation.BorderStroke(
-                        1.dp, MiuixTheme.colorScheme.primary.copy(alpha = 0.35f)
+                        1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
                     )
                 ) {
                     Text(
                         text = "购买并下载",
-                        style = MiuixTheme.textStyles.footnote2,
-                        color = MiuixTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                     )
@@ -1070,15 +1061,15 @@ private fun PostImage(url: String, referer: String, modifier: Modifier = Modifie
                 .fillMaxWidth()
                 .heightIn(min = 88.dp)
                 .clip(RoundedCornerShape(12.dp))
-                .background(MiuixTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.6f))
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
                 .clickable { failed = false; attempt += 1 }
                 .padding(16.dp),
             contentAlignment = Alignment.Center
         ) {
             Text(
                 text = "图片加载失败，点击重试",
-                style = MiuixTheme.textStyles.footnote1,
-                color = MiuixTheme.colorScheme.onBackgroundVariant
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
         return
@@ -1107,7 +1098,7 @@ private fun PostImage(url: String, referer: String, modifier: Modifier = Modifie
 @Composable
 private fun ReplyBar(loggedIn: Boolean, onReply: () -> Unit) {
     Surface(
-        color = MiuixTheme.colorScheme.surfaceContainer,
+        color = MaterialTheme.colorScheme.surface,
         shadowElevation = 8.dp
     ) {
         Row(
@@ -1122,12 +1113,12 @@ private fun ReplyBar(loggedIn: Boolean, onReply: () -> Unit) {
                     .clip(RoundedCornerShape(22.dp))
                     .clickable(onClick = onReply),
                 shape = RoundedCornerShape(22.dp),
-                color = MiuixTheme.colorScheme.surfaceContainerHigh
+                color = MaterialTheme.colorScheme.surfaceVariant
             ) {
                 Text(
                     text = if (loggedIn) "写下你的回复…" else "登录后参与讨论",
-                    style = MiuixTheme.textStyles.body2,
-                    color = MiuixTheme.colorScheme.onBackgroundVariant,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
                 )
             }
@@ -1135,13 +1126,13 @@ private fun ReplyBar(loggedIn: Boolean, onReply: () -> Unit) {
             Surface(
                 onClick = onReply,
                 shape = CircleShape,
-                color = MiuixTheme.colorScheme.primary,
+                color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(42.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
                         Icons.Rounded.Send, "回复",
-                        tint = MiuixTheme.colorScheme.onPrimary,
+                        tint = MaterialTheme.colorScheme.onPrimary,
                         modifier = Modifier.size(19.dp)
                     )
                 }

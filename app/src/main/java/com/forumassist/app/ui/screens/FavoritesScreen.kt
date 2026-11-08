@@ -17,9 +17,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.History
-import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.basic.Surface
-import top.yukonga.miuix.kmp.basic.Text
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -68,9 +68,9 @@ fun FavoritesScreen(
                 ) {
                     Text(
                         text = label,
-                        style = MiuixTheme.textStyles.subtitle,
-                        color = if (tab == index) MiuixTheme.colorScheme.onBackground
-                        else MiuixTheme.colorScheme.onBackgroundVariant,
+                        style = MaterialTheme.typography.titleSmall,
+                        color = if (tab == index) MaterialTheme.colorScheme.onBackground
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
                         fontWeight = if (tab == index) FontWeight.Bold else FontWeight.Normal,
                         modifier = Modifier.padding(vertical = 6.dp)
                     )
@@ -79,7 +79,7 @@ fun FavoritesScreen(
                             .width(18.dp)
                             .padding(top = 2.dp),
                         shape = RoundedCornerShape(2.dp),
-                        color = if (tab == index) MiuixTheme.colorScheme.primary
+                        color = if (tab == index) MaterialTheme.colorScheme.primary
                         else androidx.compose.ui.graphics.Color.Transparent
                     ) {
                         Spacer(Modifier.fillMaxWidth().padding(vertical = 1.dp))

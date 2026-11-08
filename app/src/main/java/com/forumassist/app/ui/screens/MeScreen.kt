@@ -25,12 +25,12 @@ import androidx.compose.material.icons.outlined.Logout
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.rounded.ChevronRight
-import top.yukonga.miuix.kmp.basic.Icon
-import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.basic.Surface
-import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.extra.SuperDialog
-import com.forumassist.app.ui.components.TextButton
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -70,13 +70,13 @@ fun MeScreen(
                     modifier = Modifier
                         .size(58.dp)
                         .clip(RoundedCornerShape(20.dp))
-                        .background(MiuixTheme.colorScheme.primary.copy(alpha = 0.12f)),
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
                         text = "坛",
-                        style = MiuixTheme.textStyles.title3,
-                        color = MiuixTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.Bold
                     )
                 }
@@ -84,13 +84,13 @@ fun MeScreen(
                 Column {
                     Text(
                         text = if (loggedSites.isEmpty()) "本地模式" else loggedSites.first().username ?: "已登录",
-                        style = MiuixTheme.textStyles.title3
+                        style = MaterialTheme.typography.titleLarge
                     )
                     Text(
                         text = if (loggedSites.isEmpty()) "登录后可以发帖、回复、同步收藏"
                         else "已登录 ${loggedSites.size} 个站点",
-                        style = MiuixTheme.textStyles.footnote1,
-                        color = MiuixTheme.colorScheme.onBackgroundVariant
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
@@ -98,8 +98,9 @@ fun MeScreen(
             Spacer(Modifier.height(18.dp))
 
             Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = MiuixTheme.colorScheme.surfaceContainer,
+                shape = RoundedCornerShape(18.dp),
+                color = MaterialTheme.colorScheme.surface,
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(modifier = Modifier.padding(vertical = 16.dp)) {
@@ -151,7 +152,7 @@ fun MeScreen(
                 SettingRow(
                     title = "退出全部账号",
                     icon = Icons.Outlined.Logout,
-                    iconTint = MiuixTheme.colorScheme.error,
+                    iconTint = MaterialTheme.colorScheme.error,
                     onClick = { loggedSites.forEach { state.logout(it) } }
                 )
             }
@@ -160,8 +161,8 @@ fun MeScreen(
         Spacer(Modifier.height(20.dp))
         Text(
             text = "本应用为个人学习项目，与「论坛助手」官方无关。\n内容版权归各论坛及原作者所有。",
-            style = MiuixTheme.textStyles.footnote2,
-            color = MiuixTheme.colorScheme.onBackgroundVariant.copy(alpha = 0.7f),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
             textAlign = TextAlign.Center,
             modifier = Modifier
                 .fillMaxWidth()
@@ -170,18 +171,29 @@ fun MeScreen(
     }
 
     if (showAbout) {
-        SuperDialog(
-            show = true,
-            title = "论坛助手 · Android",
-            summary = "一个专注阅读的论坛聚合客户端。\n\n支持 Discuz / PHPWind / XenForo / Vbulletin 站点的浏览、登录、发帖与回复；内置演示站点，离线也能体验完整流程。\n\n抓取失败时可用「网页模式」直接浏览原站，不会卡住使用。",
-            onDismissRequest = { showAbout = false }
-        ) {
-            TextButton(
-                text = "知道了",
-                onClick = { showAbout = false },
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
+        AlertDialog(
+            onDismissRequest = { showAbout = false },
+            title = { Text("论坛助手 · Android") },
+            text = {
+                Column {
+                    Text("一个专注阅读的论坛聚合客户端。", style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "支持 Discuz / PHPWind / XenForo / Vbulletin 站点的浏览、登录、发帖与回复；" +
+                            "内置演示站点，离线也能体验完整流程。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "抓取失败时可用「网页模式」直接浏览原站，不会卡住使用。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = { TextButton(onClick = { showAbout = false }) { Text("知道了") } }
+        )
     }
 }
 
@@ -193,13 +205,13 @@ private fun StatItem(label: String, value: String, modifier: Modifier = Modifier
     ) {
         Text(
             text = value,
-            style = MiuixTheme.textStyles.title3,
+            style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold
         )
         Text(
             text = label,
-            style = MiuixTheme.textStyles.footnote2,
-            color = MiuixTheme.colorScheme.onBackgroundVariant
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }

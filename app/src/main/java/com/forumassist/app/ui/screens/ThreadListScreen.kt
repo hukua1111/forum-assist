@@ -1,6 +1,5 @@
 package com.forumassist.app.ui.screens
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -8,12 +7,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -24,6 +21,13 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -33,8 +37,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -44,13 +46,7 @@ import com.forumassist.app.data.DefaultBoardOrders
 import com.forumassist.app.data.Site
 import com.forumassist.app.data.ThreadSummary
 import com.forumassist.app.ui.components.EmptyState
-import com.forumassist.app.ui.components.FilterChip
 import com.forumassist.app.ui.components.ThreadCard
-import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
-import top.yukonga.miuix.kmp.basic.Icon
-import top.yukonga.miuix.kmp.basic.IconButton
-import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 private val DEFAULT_ORDERS = DefaultBoardOrders
 
@@ -257,28 +253,23 @@ fun ThreadListScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 6.dp, end = 8.dp, top = 8.dp, bottom = 2.dp),
+                    .padding(start = 4.dp, end = 8.dp, top = 8.dp, bottom = 2.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = onBack) {
-                    Icon(
-                        Icons.AutoMirrored.Rounded.ArrowBack,
-                        "返回",
-                        tint = MiuixTheme.colorScheme.onBackground
-                    )
+                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回", tint = MaterialTheme.colorScheme.onBackground)
                 }
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = boardName.ifBlank { "版块" },
-                        style = MiuixTheme.textStyles.title3,
-                        color = MiuixTheme.colorScheme.onBackground,
+                        style = MaterialTheme.typography.titleMedium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
                         text = site.name,
-                        style = MiuixTheme.textStyles.footnote2,
-                        color = MiuixTheme.colorScheme.onBackgroundVariant
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 // 手动刷新：清掉这页的缓存重新拉，不受 10 分钟限制
@@ -289,7 +280,7 @@ fun ThreadListScreen(
                     Icon(
                         Icons.Rounded.Refresh,
                         "刷新",
-                        tint = MiuixTheme.colorScheme.onBackgroundVariant
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 // 抓取卡住 / 被拦截时的应急出口：直接用站内浏览器看这一页
@@ -297,7 +288,7 @@ fun ThreadListScreen(
                     Icon(
                         Icons.Outlined.Language,
                         "用网页模式打开",
-                        tint = MiuixTheme.colorScheme.onBackgroundVariant
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
@@ -319,7 +310,7 @@ fun ThreadListScreen(
 
             when {
                 loading && items.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(size = 24.dp, strokeWidth = 2.5.dp)
+                    CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
                 }
 
                 visible.isEmpty() -> {
@@ -351,7 +342,7 @@ fun ThreadListScreen(
                     if (loading) {
                         item {
                             Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
-                                CircularProgressIndicator(size = 20.dp, strokeWidth = 2.dp)
+                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                             }
                         }
                     }
@@ -359,8 +350,8 @@ fun ThreadListScreen(
                         item {
                             Text(
                                 text = "— 没有更多了 —",
-                                style = MiuixTheme.textStyles.footnote2,
-                                color = MiuixTheme.colorScheme.onBackgroundVariant,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.fillMaxWidth().padding(14.dp),
                                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
                             )
@@ -371,31 +362,17 @@ fun ThreadListScreen(
         }
 
         if (state.settings.showComposeButton) {
-            // 悬浮「发帖」胶囊：HyperOS 的悬浮按钮是主色实心 + 大圆角
-            Row(
+            ExtendedFloatingActionButton(
+                onClick = onCompose,
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(18.dp)
-                    .shadow(10.dp, RoundedCornerShape(22.dp))
-                    .clip(RoundedCornerShape(22.dp))
-                    .background(MiuixTheme.colorScheme.primary)
-                    .clickable(onClick = onCompose)
-                    .padding(horizontal = 18.dp, vertical = 11.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    Icons.Rounded.Edit,
-                    contentDescription = null,
-                    modifier = Modifier.size(17.dp),
-                    tint = MiuixTheme.colorScheme.onPrimary
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    text = "发帖",
-                    style = MiuixTheme.textStyles.button,
-                    color = MiuixTheme.colorScheme.onPrimary
-                )
-            }
+                    .padding(18.dp),
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+                shape = RoundedCornerShape(16.dp),
+                icon = { Icon(Icons.Rounded.Edit, null, Modifier.size(18.dp)) },
+                text = { Text("发帖", fontWeight = FontWeight.Medium) }
+            )
         }
     }
 }
@@ -415,11 +392,27 @@ private fun FilterChips(
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         options.forEach { (key, label) ->
-            FilterChip(
-                label = label,
-                selected = selectedKey == key,
-                onClick = { onSelect(key) }
-            )
+            val selected = selectedKey == key
+            Surface(
+                modifier = Modifier.clickable { onSelect(key) },
+                shape = RoundedCornerShape(20.dp),
+                color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                else MaterialTheme.colorScheme.surface,
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+                    else MaterialTheme.colorScheme.outlineVariant
+                )
+            ) {
+                Text(
+                    text = label,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (selected) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
+                )
+            }
         }
     }
 }

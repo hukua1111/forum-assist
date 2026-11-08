@@ -21,10 +21,10 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Forum
 import androidx.compose.material.icons.rounded.Star
-import top.yukonga.miuix.kmp.basic.Icon
-import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.basic.Surface
-import top.yukonga.miuix.kmp.basic.Text
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -58,7 +58,7 @@ fun PinnedBoardsScreen(
                 Surface(
                     onClick = onManage,
                     shape = RoundedCornerShape(12.dp),
-                    color = MiuixTheme.colorScheme.surfaceContainerHigh
+                    color = MaterialTheme.colorScheme.surfaceVariant
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
@@ -66,14 +66,14 @@ fun PinnedBoardsScreen(
                     ) {
                         Icon(
                             Icons.Outlined.Add, null,
-                            tint = MiuixTheme.colorScheme.primary,
+                            tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(Modifier.width(4.dp))
                         Text(
                             "添加",
-                            color = MiuixTheme.colorScheme.primary,
-                            style = MiuixTheme.textStyles.footnote1
+                            color = MaterialTheme.colorScheme.primary,
+                            style = MaterialTheme.typography.labelLarge
                         )
                     }
                 }
@@ -109,8 +109,8 @@ fun PinnedBoardsScreen(
                 item(key = "tip") {
                     Text(
                         text = "长按/点击右侧 ★ 可取消固定",
-                        style = MiuixTheme.textStyles.footnote2,
-                        color = MiuixTheme.colorScheme.onBackgroundVariant,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(start = 4.dp, top = 8.dp)
                     )
                 }
@@ -134,7 +134,8 @@ private fun PinnedRow(
             .clip(RoundedCornerShape(16.dp))
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(16.dp),
-        color = MiuixTheme.colorScheme.surfaceContainer,
+        color = MaterialTheme.colorScheme.surface,
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Row(
             modifier = Modifier.padding(start = 13.dp, end = 6.dp, top = 13.dp, bottom = 13.dp),
@@ -157,16 +158,16 @@ private fun PinnedRow(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = pin.name,
-                    style = MiuixTheme.textStyles.subtitle,
+                    style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
-                    color = MiuixTheme.colorScheme.onBackground,
+                    color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
                     text = listOf(siteName, siteHost).filter { it.isNotBlank() }.joinToString("  ·  "),
-                    style = MiuixTheme.textStyles.footnote2,
-                    color = MiuixTheme.colorScheme.onBackgroundVariant,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -174,7 +175,7 @@ private fun PinnedRow(
             Surface(
                 onClick = onUnpin,
                 shape = RoundedCornerShape(10.dp),
-                color = MiuixTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.7f)
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
             ) {
                 Icon(
                     Icons.Rounded.Star, "取消固定",
@@ -187,7 +188,7 @@ private fun PinnedRow(
             Spacer(Modifier.width(2.dp))
             Icon(
                 Icons.Rounded.ChevronRight, null,
-                tint = MiuixTheme.colorScheme.onBackgroundVariant.copy(alpha = 0.5f),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                 modifier = Modifier.size(18.dp)
             )
         }

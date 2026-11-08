@@ -26,8 +26,7 @@
 
 ## 2. 技术栈
 
-- Kotlin + Jetpack Compose + Navigation Compose
-- **MIUIX**（`top.yukonga.miuix.kmp:miuix`，小米 HyperOS 设计语言的 Compose 实现）：底栏、顶栏、卡片、开关、输入框、对话框、分段控件全部用它，配色与圆角按 HyperOS 2 的一套来做
+- Kotlin + Jetpack Compose（Material 3）+ Navigation Compose
 - OkHttp + Jsoup：网络与 HTML 解析
 - Coil：图片加载
 - 原生 SharedPreferences / 文件存储：站点、Cookie、收藏、离线、设置

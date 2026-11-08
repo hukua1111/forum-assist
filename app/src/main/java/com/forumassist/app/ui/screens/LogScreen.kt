@@ -23,11 +23,11 @@ import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Share
-import top.yukonga.miuix.kmp.basic.Icon
-import top.yukonga.miuix.kmp.basic.IconButton
-import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.basic.Surface
-import top.yukonga.miuix.kmp.basic.Text
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -75,21 +75,21 @@ fun LogScreen(onBack: () -> Unit) {
             IconButton(onClick = onBack) {
                 Icon(
                     Icons.AutoMirrored.Rounded.ArrowBack, "返回",
-                    tint = MiuixTheme.colorScheme.onBackground
+                    tint = MaterialTheme.colorScheme.onBackground
                 )
             }
             Column(modifier = Modifier.weight(1f)) {
-                Text("运行日志", style = MiuixTheme.textStyles.headline1)
+                Text("运行日志", style = MaterialTheme.typography.titleMedium)
                 Text(
                     "${lines.size} 条 · 文件 ${AppLog.sizeKb()} KB",
-                    style = MiuixTheme.textStyles.footnote2,
-                    color = MiuixTheme.colorScheme.onBackgroundVariant
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             IconButton(onClick = { tick += 1 }) {
                 Icon(
                     Icons.Rounded.Refresh, "刷新",
-                    tint = MiuixTheme.colorScheme.onBackgroundVariant,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(20.dp)
                 )
             }
@@ -99,7 +99,7 @@ fun LogScreen(onBack: () -> Unit) {
             }) {
                 Icon(
                     Icons.Rounded.ContentCopy, "复制",
-                    tint = MiuixTheme.colorScheme.onBackgroundVariant,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(19.dp)
                 )
             }
@@ -108,7 +108,7 @@ fun LogScreen(onBack: () -> Unit) {
             }) {
                 Icon(
                     Icons.Rounded.Share, "分享",
-                    tint = MiuixTheme.colorScheme.onBackgroundVariant,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(19.dp)
                 )
             }
@@ -119,7 +119,7 @@ fun LogScreen(onBack: () -> Unit) {
             }) {
                 Icon(
                     Icons.Rounded.DeleteOutline, "清空",
-                    tint = MiuixTheme.colorScheme.onBackgroundVariant,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(20.dp)
                 )
             }
@@ -127,7 +127,7 @@ fun LogScreen(onBack: () -> Unit) {
 
         tip?.let { msg ->
             Surface(
-                color = MiuixTheme.colorScheme.primary.copy(alpha = 0.10f),
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
                 shape = RoundedCornerShape(10.dp),
                 modifier = Modifier
                     .fillMaxWidth()
@@ -135,8 +135,8 @@ fun LogScreen(onBack: () -> Unit) {
             ) {
                 Text(
                     msg,
-                    style = MiuixTheme.textStyles.footnote1,
-                    color = MiuixTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
                 )
             }
@@ -146,8 +146,8 @@ fun LogScreen(onBack: () -> Unit) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
                     "还没有日志。用一会儿再回来看，或复现一次问题后刷新。",
-                    style = MiuixTheme.textStyles.footnote1,
-                    color = MiuixTheme.colorScheme.onBackgroundVariant
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         } else {
@@ -159,19 +159,19 @@ fun LogScreen(onBack: () -> Unit) {
             ) {
                 itemsIndexed(lines) { _, line ->
                     Surface(
-                        color = MiuixTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.4f),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(modifier = Modifier.padding(8.dp)) {
                             Text(
                                 line,
-                                style = MiuixTheme.textStyles.footnote2.copy(
+                                style = MaterialTheme.typography.labelSmall.copy(
                                     fontFamily = FontFamily.Monospace,
                                     fontSize = 11.sp,
                                     lineHeight = 15.sp
                                 ),
-                                color = MiuixTheme.colorScheme.onBackgroundVariant,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 80,
                                 overflow = TextOverflow.Ellipsis
                             )
