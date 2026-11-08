@@ -14,6 +14,7 @@ object App {
 
     fun init(context: Context) {
         if (!::state.isInitialized) {
+            com.forumassist.app.data.AppLog.init(context.applicationContext)
             state = AppState(context.applicationContext)
 
             // 图片加载复用 App 的 OkHttp（带登录 Cookie + Referer），

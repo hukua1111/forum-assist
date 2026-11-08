@@ -44,6 +44,7 @@ import com.forumassist.app.ui.screens.BoardsScreen
 import com.forumassist.app.ui.screens.ComposeScreen
 import com.forumassist.app.ui.screens.FavoritesScreen
 import com.forumassist.app.ui.screens.HomeScreen
+import com.forumassist.app.ui.screens.LogScreen
 import com.forumassist.app.ui.screens.LoginScreen
 import com.forumassist.app.ui.screens.MeScreen
 import com.forumassist.app.ui.screens.PinnedBoardsScreen
@@ -194,7 +195,15 @@ fun AppRoot() {
                     }
 
                     composable("settings") {
-                        SettingsScreen(state = state, onBack = { nav.popBackStack() })
+                        SettingsScreen(
+                            state = state,
+                            onBack = { nav.popBackStack() },
+                            onOpenLogs = { nav.navigate("logs") }
+                        )
+                    }
+
+                    composable("logs") {
+                        LogScreen(onBack = { nav.popBackStack() })
                     }
 
                     composable("search") {
@@ -246,7 +255,8 @@ fun AppRoot() {
                             boardName = name,
                             onBack = { nav.popBackStack() },
                             onOpenThread = openThread,
-                            onCompose = { nav.navigate("compose/${site.id}?fid=$fid") }
+                            onCompose = { nav.navigate("compose/${site.id}?fid=$fid") },
+                            onLogin = { nav.navigate("login/${site.id}") }
                         )
                     }
 

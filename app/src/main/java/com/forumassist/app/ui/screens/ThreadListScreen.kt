@@ -56,7 +56,8 @@ fun ThreadListScreen(
     boardName: String,
     onBack: () -> Unit,
     onOpenThread: (ThreadSummary) -> Unit,
-    onCompose: () -> Unit
+    onCompose: () -> Unit,
+    onLogin: () -> Unit = {}
 ) {
     // 第一层用 key 记选中项，真正请求用的是它的 query（页面链接原文）
     var orderKey by remember(fid, site.id) { mutableStateOf("") }
@@ -90,17 +91,29 @@ fun ThreadListScreen(
         try {
             val orderQuery = orders.firstOrNull { it.key == orderKey }?.query.orEmpty()
             val typeQuery = types.firstOrNull { it.key == typeKey }?.query.orEmpty()
-            val data = state.threadPage(site, fid, 1, orderQuery, typeQuery)
-            items = data.threads
-            if (data.types.isNotEmpty()) types = data.types
-            end = data.threads.isEmpty()
-            if (data.threads.filterNot { it.isTop }.isEmpty()) {
-                error = if (data.threads.isEmpty()) "这个版块暂时没有内容，可能会员可见或需要登录"
-                else "这个分类下只有置顶帖"
+            // 硬超时：网络卡住时也要把转圈收掉，给用户一个明确的出口
+            val data = kotlinx.coroutines.withTimeoutOrNull(20_000L) {
+                state.threadPage(site, fid, 1, orderQuery, typeQuery)
+            }
+            if (data == null) {
+                error = "加载超时（20 秒）。可能是站点响应慢，或登录态已失效。\n可以下拉重试，或用右上角网页模式打开。"
+            } else {
+                items = data.threads
+                if (data.types.isNotEmpty()) types = data.types
+                end = data.threads.isEmpty()
+                if (data.threads.filterNot { it.isTop }.isEmpty()) {
+                    val issue = state.client.lastListIssue
+                    error = when {
+                        !issue.isNullOrBlank() -> issue
+                        data.threads.isEmpty() -> "这个版块暂时没有内容，可能会员可见或需要登录"
+                        else -> "这个分类下只有置顶帖"
+                    }
+                }
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
+            com.forumassist.app.data.AppLog.e("板块", "加载失败 fid=$fid", e)
             error = "加载失败：" + (e.message ?: "未知错误")
         } finally {
             loading = false
@@ -184,12 +197,16 @@ fun ThreadListScreen(
                     CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
                 }
 
-                visible.isEmpty() -> EmptyState(
-                    title = if (error != null) "这里没有帖子" else "没有帖子",
-                    desc = error ?: "换个排序方式或分类试试",
-                    actionLabel = "重新加载",
-                    onAction = { reloadKey += 1 }
-                )
+                visible.isEmpty() -> {
+                    // 登录掉了就去登录，别让用户对着「重新加载」反复点
+                    val needLogin = error?.contains("登录") == true
+                    EmptyState(
+                        title = if (needLogin) "需要登录" else if (error != null) "这里没有帖子" else "没有帖子",
+                        desc = error ?: "换个排序方式或分类试试",
+                        actionLabel = if (needLogin) "去登录" else "重新加载",
+                        onAction = { if (needLogin) onLogin() else reloadKey += 1 }
+                    )
+                }
 
                 else -> LazyColumn(
                     state = listState,

@@ -265,7 +265,10 @@ class Store(context: Context) {
 
     fun cacheSize(): Long {
         var size = 0L
-        app.filesDir.walkTopDown().forEach { if (it.isFile) size += it.length() }
+        app.filesDir.walkTopDown().forEach {
+            // 日志/离线索引这类小文件不算「缓存」，否则清理前后数字对不上
+            if (it.isFile && !it.name.endsWith(".log")) size += it.length()
+        }
         // Coil 的图片缓存放在 cacheDir 下，之前没算进来：看着只有零点几 MB，其实图片占了大部分
         File(app.cacheDir, "image_cache").walkTopDown().forEach { if (it.isFile) size += it.length() }
         return size

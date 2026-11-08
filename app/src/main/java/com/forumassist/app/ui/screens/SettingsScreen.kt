@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.outlined.Article
 import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.CleaningServices
 import androidx.compose.material.icons.outlined.Palette
@@ -45,13 +46,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.forumassist.app.AppState
+import com.forumassist.app.data.AppLog
 import com.forumassist.app.data.Settings
 import com.forumassist.app.ui.components.SettingRow
 import com.forumassist.app.ui.components.SoftCard
 import com.forumassist.app.ui.theme.AccentPresets
 
 @Composable
-fun SettingsScreen(state: AppState, onBack: () -> Unit) {
+fun SettingsScreen(state: AppState, onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
     val s = state.settings
     var editKeywords by remember { mutableStateOf(false) }
     var editAuthors by remember { mutableStateOf(false) }
@@ -248,6 +250,12 @@ fun SettingsScreen(state: AppState, onBack: () -> Unit) {
                     desc = "正文、图片、首页列表共占用 ${"%.1f".format(cacheMb)} MB",
                     icon = Icons.Outlined.CleaningServices,
                     onClick = { confirmClear = true }
+                )
+                SettingRow(
+                    title = "运行日志",
+                    desc = "抓取失败、登录失效、解析异常都会记在这里（${AppLog.sizeKb()} KB）",
+                    icon = Icons.Outlined.Article,
+                    onClick = onOpenLogs
                 )
             }
 

@@ -8,6 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import com.forumassist.app.data.Board
+import com.forumassist.app.data.AppLog
 import com.forumassist.app.data.DefaultBoardOrders
 import com.forumassist.app.data.Demo
 import com.forumassist.app.data.ForumClient
@@ -116,12 +117,22 @@ class AppState(context: Context) {
 
         // 冷启动：先把上次的内容铺上（打开就有东西看），再在后台刷新一次。
         // 之后切页面/切分栏都只读缓存，不会自动刷。
-        val cachedFeed = store.feedCache(0)
-        if (cachedFeed.isNotEmpty()) {
-            feedTabs[0] = cachedFeed
-            feed.addAll(cachedFeed)
+        // 三个分栏的磁盘缓存一起铺上，冷启动切分栏也是瞬时的
+        for (i in 0..2) {
+            val cached = store.feedCache(i)
+            if (cached.isNotEmpty()) feedTabs[i] = cached
         }
+        feedTabs[0]?.let { feed.addAll(it) }
         if (sites.any { it.enabled }) loadFeed(reset = true)
+
+        AppLog.d(
+            "应用",
+            "启动 v${BuildConfig.VERSION_NAME}(${BuildConfig.VERSION_CODE}) 站点=${sites.size} " +
+                "登录=${sites.count { it.loggedIn }} 分栏=$feedTab"
+        )
+        sites.forEach { s ->
+            AppLog.d("应用", "站点 ${s.name} ${s.baseUrl} 登录=${s.loggedIn} 地址页=${s.addressPage}")
+        }
     }
 
     /** 尚香书苑判定：名称含「尚香」或域名含 sxsy（地址发布页会换域名） */
@@ -216,7 +227,8 @@ class AppState(context: Context) {
     private val addressTried = mutableMapOf<String, Long>()
     private var resolvingAddress = false
 
-    private fun buildView(tab: Int = feedTab): String = when (tab) {
+    /** 分栏下标 → guide 的 view 参数 */
+    private fun viewOfTab(tab: Int): String = when (tab) {
         1 -> "newreply"
         2 -> "hot"
         else -> "newthread"
@@ -259,37 +271,16 @@ class AppState(context: Context) {
                     feedError = "还没有启用任何站点，去「论坛」里添加一个吧"
                     return@launch
                 }
-                var failed = 0
-                val view = buildView(tab)
-                val collected = coroutineScope {
-                    enabled.map { site ->
-                        async(Dispatchers.IO) {
-                            val list = try {
-                                if (site.isDemo) {
-                                    Demo.threads()
-                                } else if (page <= 1) {
-                                    // 优先读站点首页自带的门户四格；失败则熔断 10 分钟并回退 guide
-                                    val now = System.currentTimeMillis()
-                                    val portal = if (now >= (portalCoolDown[site.id] ?: 0L)) {
-                                        client.portal(site, view).also {
-                                            if (it.isEmpty()) portalCoolDown[site.id] = now + 10 * 60_000L
-                                        }
-                                    } else emptyList()
-                                    portal.ifEmpty { client.guide(site, view, page) }
-                                } else {
-                                    client.guide(site, view, page)
-                                }
-                            } catch (e: Exception) {
-                                emptyList()
-                            }
-                            if (list.isEmpty() && !site.isDemo) failed++
-                            list
-                        }
-                    }.awaitAll()
-                }.flatten()
 
+                client.resetListIssue()
                 val blockedFidSet = enabled.flatMap { it.blockedFids }.toSet()
-                val merged = collected
+                // 快捷导航里的「永久地址」「每日签到」之类也带帖子链接，
+                // 旧缓存里可能还留着，展示前统一剔掉
+                val navNoise = setOf(
+                    "永久地址", "每日签到", "积分充值", "排行榜", "淘帖", "搜索", "版规"
+                )
+                fun clean(list: List<ThreadSummary>) = list
+                    .filterNot { it.title.trim() in navNoise }
                     .filterNot { blocked(it) }
                     // 置顶（版规/公告）不进信息流
                     .filterNot { it.isTop }
@@ -297,9 +288,102 @@ class AppState(context: Context) {
                     .distinctBy { it.key }
                     .sortedByDescending { it.ts }
 
-                if (token != feedToken || tab != feedTab) return@launch
+                // 三个分栏在同一个首页里，第一页只发一次请求，解析出三份列表
+                var failed = 0
+                var merged: List<ThreadSummary>
+                if (page <= 1) {
+                    val bundles = coroutineScope {
+                        enabled.map { s ->
+                            async(Dispatchers.IO) {
+                                val now = System.currentTimeMillis()
+                                // 站点没有门户四格时熔断 10 分钟，别每次切分栏都白下一遍首页
+                                var b = if (now >= (portalCoolDown[s.id] ?: 0L)) {
+                                    try {
+                                        client.portalBundle(s).also {
+                                            if (it.isEmpty()) portalCoolDown[s.id] = now + 10 * 60_000L
+                                        }
+                                    } catch (e: Exception) {
+                                        AppLog.e("首页", "portalBundle 失败 ${s.name}", e)
+                                        ForumClient.PortalBundle()
+                                    }
+                                } else ForumClient.PortalBundle()
+                                if (b.isEmpty()) {
+                                    // 站点没有门户四格：只补当前分栏一次 guide，不重复发三次
+                                    val view = viewOfTab(feedTab)
+                                    val one = try {
+                                        client.guide(s, view, 1)
+                                    } catch (e: Exception) {
+                                        AppLog.e("首页", "guide 失败 ${s.name}", e)
+                                        emptyList()
+                                    }
+                                    b = when (view) {
+                                        "newreply" -> b.copy(newreply = one)
+                                        "hot" -> b.copy(hot = one)
+                                        else -> b.copy(newthread = one)
+                                    }
+                                }
+                                b
+                            }
+                        }.awaitAll()
+                    }
+                    // 整站一个分栏都没抓到，才算这个站点失败
+                    failed = bundles.count { it.isEmpty() }
+                    val perTab = (0..2).map { idx ->
+                        clean(bundles.flatMap { it.of(viewOfTab(idx)) })
+                    }.toMutableList()
 
-                val cached = if (merged.isEmpty()) store.feedCache(tab) else emptyList()
+                    // 四格可能只给了其中一两栏（比如没有「热帖」块）：
+                    // 当前分栏空着就补一次 guide，别让用户切过来看到一片空白
+                    if (perTab[feedTab].isEmpty() && bundles.any { !it.isEmpty() }) {
+                        val fill = clean(
+                            enabled.flatMap { s ->
+                                try {
+                                    client.guide(s, viewOfTab(feedTab), 1)
+                                } catch (e: Exception) {
+                                    emptyList()
+                                }
+                            }
+                        )
+                        if (fill.isNotEmpty()) perTab[feedTab] = fill
+                    }
+
+                    perTab.forEachIndexed { idx, list ->
+                        if (list.isNotEmpty()) {
+                            feedTabs[idx] = list
+                            store.saveFeedCache(list, idx)
+                        }
+                    }
+                    merged = perTab[feedTab]
+                    AppLog.d(
+                        "首页",
+                        "刷新完成 最新=${perTab[0].size} 回复=${perTab[1].size} 热帖=${perTab[2].size}"
+                    )
+                } else {
+                    merged = clean(
+                        coroutineScope {
+                            enabled.map { s ->
+                                async(Dispatchers.IO) {
+                                    try {
+                                        client.guide(s, viewOfTab(feedTab), page)
+                                    } catch (e: Exception) {
+                                        emptyList()
+                                    }
+                                }
+                            }.awaitAll()
+                        }.flatten()
+                    )
+                }
+
+                if (token != feedToken) return@launch
+
+                // 用户可能在刷新途中切了分栏：以「当前分栏」为准展示，
+                // 第一页已经把三个分栏都缓存好了，切换过去直接就有内容。
+                val shownTab = feedTab
+                if (page <= 1) merged = feedTabs[shownTab] ?: emptyList()
+
+                val cached = if (merged.isEmpty()) {
+                    store.feedCache(shownTab).filterNot { it.title.trim() in navNoise }
+                } else emptyList()
                 val usable = when {
                     merged.isNotEmpty() -> merged
                     cached.isNotEmpty() -> cached
@@ -320,8 +404,8 @@ class AppState(context: Context) {
                 feedEnd = usable.isEmpty()
 
                 if (merged.isNotEmpty()) {
-                    feedTabs[tab] = merged
-                    store.saveFeedCache(merged, tab)
+                    feedTabs[shownTab] = merged
+                    store.saveFeedCache(merged, shownTab)
                 }
 
                 // 全部失败时，尝试从「地址发布页」找最新域名（每站 30 分钟内只试一次）
@@ -335,18 +419,22 @@ class AppState(context: Context) {
                     }
                 }
 
+                val issue = client.lastListIssue
                 if (merged.isEmpty()) {
-                    feedError = if (cached.isNotEmpty()) {
-                        "站点暂时不可用（服务器报错或限流），先显示上次缓存的内容"
-                    } else if (usable.isNotEmpty()) {
-                        "真实站点暂时没有抓到内容，当前展示的是内置演示数据"
-                    } else {
-                        "没有拿到内容。可能是站点需要登录、开启了防采集，或网络不通。\n试试在「论坛」页用网页模式打开。"
+                    feedError = when {
+                        cached.isNotEmpty() -> "站点暂时不可用，先显示上次缓存的内容"
+                        usable.isNotEmpty() -> "真实站点暂时没有抓到内容，当前展示的是内置演示数据"
+                        !issue.isNullOrBlank() -> issue
+                        else -> "没有拿到内容。可能是站点需要登录、开启了防采集，或网络不通。\n试试在「论坛」页用网页模式打开。"
                     }
                 } else if (failed > 0) {
-                    feedError = "$failed 个站点加载失败，已展示其余内容"
+                    // 有问题的站点优先报具体原因（登录失效 / 服务器错误），比「N 个站点失败」有用
+                    feedError = client.lastListIssue ?: "$failed 个站点加载失败，已展示其余内容"
                 }
                 store.lastFeedRefresh = System.currentTimeMillis()
+            } catch (e: Exception) {
+                AppLog.e("首页", "刷新异常", e)
+                feedError = "刷新失败：" + (e.message ?: e.javaClass.simpleName)
             } finally {
                 if (token == feedToken) {
                     feedLoading = false
@@ -365,22 +453,22 @@ class AppState(context: Context) {
     fun switchTab(index: Int) {
         if (feedTab == index) return
         feedTab = index
-        // 先看内存缓存，再看磁盘缓存；都没有才请求。
+        // 第一页刷新会把三个分栏一起缓存，所以正常情况这里直接命中，切换是瞬时的
         val cached = feedTabs[index] ?: store.feedCache(index).also {
             if (it.isNotEmpty()) feedTabs[index] = it
         }
         if (cached.isNotEmpty()) {
-            feedJob?.cancel()
             feed.clear()
             feed.addAll(cached)
             feedError = null
             feedEnd = false
             feedPage = 1
-            feedLoading = false
-            feedRefreshing = false
+            // 不打断正在进行的刷新：它跑完会把当前分栏的内容补上
         } else {
             feed.clear()
-            loadFeed(reset = true)
+            feedError = null
+            // 已经有刷新在跑了就等它，别并发重复请求
+            if (!feedLoading) loadFeed(reset = true)
         }
     }
 

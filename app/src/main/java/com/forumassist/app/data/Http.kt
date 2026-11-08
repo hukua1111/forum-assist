@@ -86,9 +86,19 @@ class Http(private val store: Store) {
      */
     val okHttpClient: OkHttpClient = OkHttpClient.Builder()
         .cookieJar(jar)
+        // 并发上限：以前用默认值（同主机 5 条），图片/正文/列表全挤在一条队列里，
+        // 图片一多就会把列表请求饿死，界面看起来就是「一直转圈」。
+        .dispatcher(
+            okhttp3.Dispatcher().apply {
+                maxRequests = 64
+                maxRequestsPerHost = 16
+            }
+        )
         .connectTimeout(12, TimeUnit.SECONDS)
         .readTimeout(18, TimeUnit.SECONDS)
         .writeTimeout(18, TimeUnit.SECONDS)
+        // 兜底：单次调用最长 35 秒，避免服务端慢速滴水时连接被无限占用
+        .callTimeout(35, TimeUnit.SECONDS)
         .followRedirects(true)
         .followSslRedirects(true)
         .addInterceptor { chain ->
@@ -109,17 +119,35 @@ class Http(private val store: Store) {
 
     private val desktopUa = ua
 
-    fun get(url: String, referer: String? = null, desktop: Boolean = false): String? = runCatching {
-        val builder = Request.Builder().url(url).get()
-            .header("User-Agent", if (desktop) desktopUa else ua)
-            .header("Accept-Language", "zh-CN,zh;q=0.9")
-            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-        referer?.let { builder.header("Referer", it) }
-        okHttpClient.newCall(builder.build()).execute().use { resp ->
-            if (!resp.isSuccessful) return@use null
-            resp.body?.string()
+    fun get(url: String, referer: String? = null, desktop: Boolean = false): String? {
+        val started = System.currentTimeMillis()
+        return try {
+            val builder = Request.Builder().url(url).get()
+                .header("User-Agent", if (desktop) desktopUa else ua)
+                .header("Accept-Language", "zh-CN,zh;q=0.9")
+                .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            referer?.let { builder.header("Referer", it) }
+            okHttpClient.newCall(builder.build()).execute().use { resp ->
+                val body = resp.body?.string()
+                val cost = System.currentTimeMillis() - started
+                AppLog.d(
+                    "HTTP",
+                    "GET ${resp.code} ${body?.length ?: 0}B ${cost}ms ${shortUrl(resp.request.url.toString())}"
+                )
+                if (!resp.isSuccessful) null else body
+            }
+        } catch (t: Throwable) {
+            val cost = System.currentTimeMillis() - started
+            AppLog.e("HTTP", "GET 失败 ${cost}ms ${shortUrl(url)}", t)
+            null
         }
-    }.getOrNull()
+    }
+
+    /** 日志里只留路径，域名和参数太多会把日志撑爆 */
+    private fun shortUrl(url: String): String = runCatching {
+        val u = java.net.URL(url)
+        (u.path + if (u.query.isNullOrBlank()) "" else "?" + u.query).take(180)
+    }.getOrDefault(url.take(180))
 
     /** 下载二进制内容（如验证码图片） */
     fun getBytes(url: String, referer: String? = null): ByteArray? = runCatching {
@@ -134,7 +162,8 @@ class Http(private val store: Store) {
         }
     }.getOrNull()
 
-    fun post(url: String, form: Map<String, String>, referer: String? = null): String? = runCatching {        val body = form.entries.joinToString("&") {
+    fun post(url: String, form: Map<String, String>, referer: String? = null): String? = try {
+        val body = form.entries.joinToString("&") {
             "${java.net.URLEncoder.encode(it.key, "UTF-8")}=${java.net.URLEncoder.encode(it.value, "UTF-8")}"
         }.toRequestBody("application/x-www-form-urlencoded; charset=UTF-8".toMediaType())
         val builder = Request.Builder().url(url).post(body)
@@ -143,9 +172,13 @@ class Http(private val store: Store) {
             .header("X-Requested-With", "XMLHttpRequest")
         referer?.let { builder.header("Referer", it) }
         okHttpClient.newCall(builder.build()).execute().use { resp ->
+            AppLog.d("HTTP", "POST ${resp.code} ${shortUrl(resp.request.url.toString())}")
             resp.body?.string()
         }
-    }.getOrNull()
+    } catch (t: Throwable) {
+        AppLog.e("HTTP", "POST 失败 ${shortUrl(url)}", t)
+        null
+    }
 
     /**
      * 探测站点：返回 (站点类型, 站点标题)

@@ -32,7 +32,20 @@ class ForumClient(private val http: Http) {
     // ---------------------------------------------------------------- 版块
 
     suspend fun boards(site: Site): List<Board> = withContext(Dispatchers.IO) {
-        val html = http.get(pageUrl(site, "forum.php", 1)) ?: return@withContext emptyList()
+        lastListIssue = null
+        val html = http.get(pageUrl(site, "forum.php", 1), referer = u(site, "forum.php"))
+        if (html == null) {
+            lastListIssue = "请求失败：网络不通或站点无响应"
+            return@withContext emptyList()
+        }
+        if (isServerErrorPage(html)) {
+            lastListIssue = "站点返回错误页（服务器过载或数据库异常）"
+            return@withContext emptyList()
+        }
+        if (isLoginWall(html)) {
+            lastListIssue = "登录态已失效（站点跳到了登录页）。去「论坛」页用网页模式重新登录一次即可"
+            return@withContext emptyList()
+        }
         val doc = Jsoup.parse(html, site.baseUrl)
         val map = LinkedHashMap<String, Board>()
         doc.select("a[href*=forumdisplay][href*=fid=]").forEach { a ->
@@ -46,21 +59,64 @@ class ForumClient(private val http: Http) {
             val desc = box?.selectFirst(".xs, .xw0, .desc, em")?.text()?.trim().orEmpty()
             map[fid] = Board(siteId = site.id, fid = fid, name = name, desc = desc.take(40))
         }
+        AppLog.d("版块", "解析到 ${map.size} 个版块")
         map.values.toList()
     }
 
     // ---------------------------------------------------------------- 列表
+
+    /**
+     * 最近一次列表抓取遇到的问题（需要登录 / 服务器错误 / 结构不认识）。
+     * UI 直接展示，用户一看就知道是「登录掉了」还是「站点挂了」。
+     */
+    var lastListIssue: String? = null
+        private set
+
+    /** 一次批量抓取开始前清空上轮的问题记录 */
+    fun resetListIssue() {
+        lastListIssue = null
+    }
+
+    /**
+     * 是否被弹到了登录页。
+     *
+     * 尚香书苑游客访问 forumdisplay 会 302 到 member.php?mod=logging&action=login，
+     * 返回的是登录页——里面的「永久地址」「每日签到」都是快捷导航里的帖子链接，
+     * 以前会被当成帖子解析出来，于是首页只显示一条「永久地址」。
+     */
+    private fun isLoginWall(html: String): Boolean {
+        if (html.contains("mod=logging&action=login") && html.contains("没有账号")) return true
+        if (html.contains("id=\"loginform\"") || html.contains("name=\"loginsubmit\"")) return true
+        return false
+    }
 
     suspend fun guide(site: Site, view: String, page: Int): List<ThreadSummary> =
         withContext(Dispatchers.IO) {
             val url = pageUrl(site, "forum.php?mod=guide&view=$view", page)
             var html = http.get(url, desktop = true)
             if (html == null || isServerErrorPage(html)) html = http.get(url)
-            if (html == null || isServerErrorPage(html)) return@withContext emptyList()
+            if (html == null) {
+                lastListIssue = "请求失败（网络超时或无响应）"
+                return@withContext emptyList()
+            }
+            if (isServerErrorPage(html)) {
+                lastListIssue = "站点返回错误页（可能是服务器过载或数据库异常）"
+                return@withContext emptyList()
+            }
+            if (isLoginWall(html)) {
+                lastListIssue = "登录态已失效（站点跳到了登录页）。去「论坛」页用网页模式重新登录一次即可"
+                return@withContext emptyList()
+            }
 
             // 手机模板常常没有 guide 模块，会重定向回首页；此时解析出来的只是广告位里的几条公告，
             // 不能当成信息流，直接判空交给上层（门户四格/缓存）处理。
             if (html.contains("ma-text-grid") || html.contains("id=\"tabs-box\"")) {
+                return@withContext emptyList()
+            }
+            // guide 页必须真的有帖子列表（#threadlist），否则就是被重定向到首页了
+            val doc = Jsoup.parse(html, site.baseUrl)
+            if (doc.selectFirst("#threadlist, tbody[id^=normalthread], .bm_c table") == null) {
+                lastListIssue = "guide 列表页结构不认识（可能被重定向到首页）"
                 return@withContext emptyList()
             }
             parseThreads(html, site)
@@ -199,32 +255,70 @@ class ForumClient(private val http: Http) {
 
     // ------------------------------------------------- 首页门户四格（最新主题/最新回复/热帖/精华）
 
+    /** 首页三个分栏一次抓下来的结果（view 顺序：newthread / newreply / hot） */
+    data class PortalBundle(
+        val newthread: List<ThreadSummary> = emptyList(),
+        val newreply: List<ThreadSummary> = emptyList(),
+        val hot: List<ThreadSummary> = emptyList()
+    ) {
+        fun of(view: String): List<ThreadSummary> = when (view) {
+            "newreply" -> newreply
+            "hot" -> hot
+            else -> newthread
+        }
+
+        fun isEmpty(): Boolean = newthread.isEmpty() && newreply.isEmpty() && hot.isEmpty()
+    }
+
     /**
-     * 抓站点首页自带门户区块（Discuz 首页四格/DIY）。
-     * 这类站点往往限制 guide 接口，但首页区块是公开可见的，且自带作者/时间/查看/回复。
-     * view: newthread / newreply / hot / digest
+     * 一次请求把「最新主题 / 最新回复 / 热帖」全部解析出来。
+     *
+     * 这三个列表本来就在同一个首页/四格页面里，之前按分栏各请求一次，
+     * 等于把同一个几百 KB 的页面下了三遍——既慢又容易被站点限流。
      */
-    suspend fun portal(site: Site, view: String): List<ThreadSummary> = withContext(Dispatchers.IO) {
+    suspend fun portalBundle(site: Site): PortalBundle = withContext(Dispatchers.IO) {
         val base = site.baseUrl.trimEnd('/')
+
+        fun bundleFrom(html: String): PortalBundle {
+            val pc = PortalBundle(
+                newthread = parsePortal(html, site, "newthread"),
+                newreply = parsePortal(html, site, "newreply"),
+                hot = parsePortal(html, site, "hot")
+            )
+            if (!pc.isEmpty()) return pc
+            return PortalBundle(
+                newthread = parsePortalMobile(html, site, "newthread"),
+                newreply = parsePortalMobile(html, site, "newreply"),
+                hot = parsePortalMobile(html, site, "hot")
+            )
+        }
 
         // 1) 优先「电脑版」：首页四格带 tip 属性，作者/查看/回复齐全
         val pcHtml = http.get("$base/forum.php?mobile=no", desktop = true)
         if (pcHtml != null && !isServerErrorPage(pcHtml)) {
-            val pc = parsePortal(pcHtml, site, view)
-            if (pc.isNotEmpty()) return@withContext pc
-            // 站点忽略 mobile=no（仍回手机模板）时，直接解析手机版的四页 tab
-            val mb = parsePortalMobile(pcHtml, site, view)
-            if (mb.isNotEmpty()) return@withContext mb
+            if (isLoginWall(pcHtml)) {
+                lastListIssue = "登录态已失效（站点跳到了登录页）。去「论坛」页用网页模式重新登录一次即可"
+                return@withContext PortalBundle()
+            }
+            val b = bundleFrom(pcHtml)
+            if (!b.isEmpty()) return@withContext b
         }
 
         // 2) 手机版首页：.tabs + #tabs-box 里的四页列表
         val home = http.get("$base/")
         if (home != null && !isServerErrorPage(home)) {
-            val mb = parsePortalMobile(home, site, view)
-            if (mb.isNotEmpty()) return@withContext mb
+            if (isLoginWall(home)) {
+                lastListIssue = "登录态已失效（站点跳到了登录页）。去「论坛」页用网页模式重新登录一次即可"
+                return@withContext PortalBundle()
+            }
+            val b = bundleFrom(home)
+            if (!b.isEmpty()) return@withContext b
         }
-        emptyList()
+        PortalBundle()
     }
+
+    suspend fun portal(site: Site, view: String): List<ThreadSummary> =
+        portalBundle(site).of(view)
 
     /** 站点自身报错页（Discuz 数据库错误 / SQL 错误 / 空壳），当作抓取失败处理 */
     private fun isServerErrorPage(html: String): Boolean {
@@ -422,10 +516,31 @@ class ForumClient(private val http: Http) {
             .filter { it.isNotEmpty() }
             .joinToString("&")
         val path = "forum.php?mod=forumdisplay&fid=$fid" + if (query.isEmpty()) "" else "&$query"
-        val html = http.get(pageUrl(site, path, page)) ?: return@withContext ThreadPage()
+        val url = pageUrl(site, path, page)
+        lastListIssue = null
+        val html = http.get(url, referer = u(site, "forum.php"))
+        if (html == null) {
+            lastListIssue = "请求失败：网络不通或站点无响应"
+            return@withContext ThreadPage()
+        }
+        if (isServerErrorPage(html)) {
+            lastListIssue = "站点返回错误页（服务器过载或数据库异常）"
+            return@withContext ThreadPage()
+        }
+        if (isLoginWall(html)) {
+            lastListIssue = "登录态已失效（站点跳到了登录页）。去「论坛」页用网页模式重新登录一次即可"
+            return@withContext ThreadPage()
+        }
         val doc = Jsoup.parse(html, site.baseUrl)
+        val threads = parseThreads(html, site)
+        val topCount = threads.count { it.isTop }
+        val queryLabel = if (query.isEmpty()) "默认" else query
+        AppLog.d("板块", "fid=$fid 第$page 页 帖子=${threads.size} 置顶=$topCount 参数=$queryLabel")
+        if (threads.isEmpty()) {
+            lastListIssue = "页面里没有解析到帖子（可能是空版块、权限不足，或模板结构变了）"
+        }
         ThreadPage(
-            threads = parseThreads(html, site),
+            threads = threads,
             // 第一层排序是固定的（DefaultBoardOrders），这里只需解析第二层分类
             orders = if (page <= 1) DefaultBoardOrders else emptyList(),
             types = if (page <= 1) parseTypes(doc) else emptyList()
@@ -476,14 +591,29 @@ class ForumClient(private val http: Http) {
     fun parseThreads(html: String, site: Site): List<ThreadSummary> {
         val doc = Jsoup.parse(html, site.baseUrl)
         val map = LinkedHashMap<String, ThreadSummary>()
-        // 跳过手机版首页的广告位/四页 tab 链接，避免把「新人必看」这类公告当成信息流
+        // 页面里只要有真正的帖子列表容器，就只认容器里的链接：
+        // 顶部快捷导航（「永久地址」「每日签到」）、广告位、页脚里的帖子链接一律不当内容。
+        val listBox = doc.selectFirst(
+            "#threadlist, tbody[id^=normalthread], tbody[id^=stickthread], ul.threadlist, .threadlist, table.tl"
+        )
         val all = doc.select("a[href*=viewthread], a[href*=thread-]")
             .toList()
-            .filter { it.closest(".ma-text-grid, .mobile-adv, .tabs, #tabs-box") == null }
+            .filter { a ->
+                if (a.closest(".ma-text-grid, .mobile-adv, .tabs, #tabs-box, #nv, #hd, #ft, #pt, .pg, #um, .nv") != null) {
+                    false
+                } else if (listBox != null) {
+                    a.closest(
+                        "#threadlist, tbody[id^=normalthread], tbody[id^=stickthread], ul.threadlist, .threadlist, table.tl"
+                    ) != null
+                } else true
+            }
         // 电脑版列表的标题链接是 a.xst；其余（“新窗口打开”“查看”“回复”等操作入口）不参与
         val preferred = all.filter { it.classNames().contains("xst") }
         val links = if (preferred.isNotEmpty()) preferred else all
-        val noiseTitles = setOf("新窗口打开", "查看", "回复", "收藏", "分享", "更多", "返回", "上一页", "下一页")
+        val noiseTitles = setOf(
+            "新窗口打开", "查看", "回复", "收藏", "分享", "更多", "返回", "上一页", "下一页",
+            "永久地址", "每日签到", "积分充值", "排行榜", "登录", "注册", "找回密码"
+        )
 
         for (a in links) {
             val href = a.attr("href")
@@ -599,10 +729,12 @@ class ForumClient(private val http: Http) {
                 val parsed = parseDetail(html, site, tid, page) ?: continue
                 if (parsed.posts.isNotEmpty()) {
                     lastDetailDebug = "成功：" + parsed.posts.size + " 楼"
+                    AppLog.d("正文", "tid=$tid 第$page 页 成功 ${parsed.posts.size} 楼")
                     return@withContext parsed
                 }
             }
             lastDetailDebug = diag.toString().ifBlank { "无可用请求" }
+            AppLog.w("正文", "tid=$tid 第$page 页 抓取失败：$lastDetailDebug")
             null
         }
 
@@ -657,6 +789,8 @@ class ForumClient(private val http: Http) {
             val hit = withTimeoutOrNull(6_500L) { first.await() }
             lastDetailDebug = hit?.let { "成功：${it.posts.size} 楼（并发探测）" }
                 ?: diag.toString().ifBlank { "并发探测 ${candidates.size} 个入口均未拿到正文" }
+            if (hit == null) AppLog.w("正文", "tid=$tid 并发探测失败：$lastDetailDebug")
+            else AppLog.d("正文", "tid=$tid 并发探测成功 ${hit.posts.size} 楼")
             return hit
         } finally {
             scope.cancel()

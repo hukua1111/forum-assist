@@ -64,14 +64,35 @@ fun BoardsScreen(
 ) {
     var allBoards by remember { mutableStateOf<List<Board>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var reloadKey by remember { mutableStateOf(0) }
     val current = state.site(site.id) ?: site
     val boards = allBoards.filterNot { it.fid in current.blockedFids }
     val hiddenBoards = allBoards.filter { it.fid in current.blockedFids }
 
-    LaunchedEffect(site.id) {
+    LaunchedEffect(site.id, reloadKey) {
         loading = true
-        allBoards = state.allBoards(site)
-        loading = false
+        error = null
+        try {
+            // 超时兜底：转圈必须有尽头，否则用户只能杀进程
+            val list = kotlinx.coroutines.withTimeoutOrNull(20_000L) { state.allBoards(site) }
+            if (list == null) {
+                error = "读取版块超时（20 秒），站点响应太慢或网络不通"
+            } else {
+                allBoards = list
+                if (list.isEmpty()) {
+                    error = state.client.lastListIssue
+                        ?: "没有解析到版块，可能站点调整了页面结构或需要登录"
+                }
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            com.forumassist.app.data.AppLog.e("版块", "读取版块失败 ${site.name}", e)
+            error = "读取版块失败：" + (e.message ?: e.javaClass.simpleName)
+        } finally {
+            loading = false
+        }
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -126,10 +147,10 @@ fun BoardsScreen(
 
             boards.isEmpty() -> EmptyState(
                 title = "没能读取到版块",
-                desc = "该站点可能调整了页面结构、需要登录，或者开启了防护。\n可以直接用网页模式浏览，体验同样完整。",
+                desc = error ?: "该站点可能调整了页面结构、需要登录，或者开启了防护。\n可以直接用网页模式浏览，体验同样完整。",
                 icon = Icons.Rounded.Forum,
-                actionLabel = "用网页模式打开",
-                onAction = onOpenWeb
+                actionLabel = "重新加载",
+                onAction = { reloadKey += 1 }
             )
 
             else -> LazyColumn(
