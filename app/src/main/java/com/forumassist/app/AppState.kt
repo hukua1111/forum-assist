@@ -11,6 +11,7 @@ import com.forumassist.app.data.Board
 import com.forumassist.app.data.Demo
 import com.forumassist.app.data.ForumClient
 import com.forumassist.app.data.Http
+import com.forumassist.app.data.PinnedBoard
 import com.forumassist.app.data.Settings
 import com.forumassist.app.data.Site
 import com.forumassist.app.data.SiteDetector
@@ -38,6 +39,8 @@ class AppState(context: Context) {
     val sites: SnapshotStateList<Site> = mutableStateListOf()
     val feed: SnapshotStateList<ThreadSummary> = mutableStateListOf()
     val favorites: SnapshotStateList<ThreadSummary> = mutableStateListOf()
+    /** 固定到底栏「板块」页的版块（快捷访问） */
+    val pinnedBoards: SnapshotStateList<PinnedBoard> = mutableStateListOf()
     val offline: SnapshotStateList<ThreadSummary> = mutableStateListOf()
     val history: SnapshotStateList<ThreadSummary> = mutableStateListOf()
     val readMarks = mutableStateMapOf<String, Int>()
@@ -57,7 +60,11 @@ class AppState(context: Context) {
     private val boardCache = mutableMapOf<String, List<Board>>()
 
     init {
-        sites.addAll(store.sites())
+        // 只保留「尚香书苑」：老版本装过的其他预设站点做一次性清理
+        val loaded = store.sites()
+        val kept = loaded.filter { isShangxiang(it) }
+        if (kept.size != loaded.size) store.saveSites(kept)
+        sites.addAll(kept)
         if (sites.isEmpty()) {
             sites.addAll(defaultSites())
             store.saveSites(sites)
@@ -82,16 +89,20 @@ class AppState(context: Context) {
         offline.addAll(store.offlineList())
         history.addAll(store.history())
         readMarks.putAll(store.readMarks())
+
+        // 固定的版块：站点已被删除的条目一并清掉
+        val ids = sites.map { it.id }.toSet()
+        val storedPins = store.pinnedBoards()
+        val pins = storedPins.filter { it.siteId in ids }
+        pinnedBoards.addAll(pins.distinctBy { it.key })
+        if (pins.size != storedPins.size) store.savePinnedBoards(pinnedBoards)
     }
 
+    /** 尚香书苑判定：名称含「尚香」或域名含 sxsy（地址发布页会换域名） */
+    private fun isShangxiang(site: Site): Boolean =
+        site.name.contains("尚香") || site.baseUrl.contains("sxsy", ignoreCase = true)
+
     private fun defaultSites(): List<Site> = listOf(
-        Demo.site(),
-        Site(name = "全球主机交流", baseUrl = "https://hostloc.com", kind = SiteKind.DISCUZ,
-            color = 0xFF4C6FFF.toInt()),
-        Site(name = "恩山无线论坛", baseUrl = "https://www.right.com.cn/forum", kind = SiteKind.DISCUZ,
-            color = 0xFFFF7A45.toInt()),
-        Site(name = "吾爱破解", baseUrl = "https://www.52pojie.cn", kind = SiteKind.DISCUZ,
-            color = 0xFFE03131.toInt()),
         Site(
             name = "尚香书苑",
             baseUrl = "https://sxsy33.com",
@@ -118,6 +129,31 @@ class AppState(context: Context) {
 
     fun isFav(key: String): Boolean = favorites.any { it.key == key }
 
+    // ------------------------------------------------------------ 板块固定（快捷访问）
+
+    fun isPinned(siteId: String, fid: String): Boolean =
+        pinnedBoards.any { it.siteId == siteId && it.fid == fid }
+
+    /** 固定 / 取消固定版块到「板块」页 */
+    fun togglePin(site: Site, board: Board) {
+        val exist = pinnedBoards.firstOrNull { it.siteId == site.id && it.fid == board.fid }
+        if (exist != null) {
+            pinnedBoards.removeAll { it.key == exist.key }
+            notify("已取消固定：${board.name}")
+        } else {
+            pinnedBoards.add(PinnedBoard(siteId = site.id, fid = board.fid, name = board.name))
+            notify("已固定到底栏：${board.name}")
+        }
+        store.savePinnedBoards(pinnedBoards)
+    }
+
+    fun unpinBoard(key: String) {
+        val hit = pinnedBoards.firstOrNull { it.key == key } ?: return
+        pinnedBoards.removeAll { it.key == key }
+        store.savePinnedBoards(pinnedBoards)
+        notify("已取消固定：${hit.name}")
+    }
+
     fun notify(msg: String) {
         toast = msg
     }
@@ -132,7 +168,6 @@ class AppState(context: Context) {
     private fun buildView(): String = when (feedTab) {
         1 -> "newreply"
         2 -> "hot"
-        3 -> "digest"
         else -> "newthread"
     }
 
@@ -203,7 +238,8 @@ class AppState(context: Context) {
             val usable = when {
                 merged.isNotEmpty() -> merged
                 cached.isNotEmpty() -> cached
-                settings.demoFallback -> Demo.threads()
+                // 演示数据只在还有「演示站点」时兜底，否则会点不进正文
+                settings.demoFallback && sites.any { it.isDemo } -> Demo.threads()
                 else -> emptyList()
             }
 
@@ -295,6 +331,11 @@ class AppState(context: Context) {
         store.saveSites(sites)
         boardCache.remove(site.id)
         feed.removeAll { it.siteId == site.id }
+        // 站点没了，固定在该站点的快捷入口也一并清掉
+        if (pinnedBoards.any { it.siteId == site.id }) {
+            pinnedBoards.removeAll { it.siteId == site.id }
+            store.savePinnedBoards(pinnedBoards)
+        }
     }
 
     fun toggleSite(site: Site) {

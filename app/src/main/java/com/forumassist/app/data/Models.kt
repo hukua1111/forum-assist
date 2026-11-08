@@ -76,6 +76,27 @@ data class Board(
     val icon: String = ""
 )
 
+/** 固定到底栏「板块」页的快捷入口 */
+data class PinnedBoard(
+    val siteId: String,
+    val fid: String,
+    val name: String
+) {
+    val key: String get() = "$siteId/$fid"
+}
+
+fun PinnedBoard.toJson(): JSONObject = JSONObject().apply {
+    put("siteId", siteId)
+    put("fid", fid)
+    put("name", name)
+}
+
+fun JSONObject.toPinnedBoard(): PinnedBoard = PinnedBoard(
+    siteId = optString("siteId"),
+    fid = optString("fid"),
+    name = optString("name")
+)
+
 data class ThreadSummary(
     val siteId: String,
     val tid: String,

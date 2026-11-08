@@ -51,7 +51,7 @@ fun FavoritesScreen(
 
     Column(modifier = Modifier.fillMaxSize()) {
         ScreenHeader(
-            title = "我的书架",
+            title = "我的收藏",
             subtitle = "收藏 ${state.favorites.size} · 离线 ${state.offline.size} · 读过 ${state.history.size}"
         )
 

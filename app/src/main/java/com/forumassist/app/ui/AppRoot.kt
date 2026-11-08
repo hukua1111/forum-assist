@@ -7,7 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Forum
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Person
@@ -46,6 +46,7 @@ import com.forumassist.app.ui.screens.FavoritesScreen
 import com.forumassist.app.ui.screens.HomeScreen
 import com.forumassist.app.ui.screens.LoginScreen
 import com.forumassist.app.ui.screens.MeScreen
+import com.forumassist.app.ui.screens.PinnedBoardsScreen
 import com.forumassist.app.ui.screens.SearchScreen
 import com.forumassist.app.ui.screens.SettingsScreen
 import com.forumassist.app.ui.screens.SitesScreen
@@ -59,7 +60,7 @@ private data class Tab(val route: String, val label: String, val icon: ImageVect
 private val tabs = listOf(
     Tab("home", "首页", Icons.Outlined.Home),
     Tab("sites", "论坛", Icons.Outlined.Forum),
-    Tab("shelf", "书架", Icons.Outlined.BookmarkBorder),
+    Tab("pinned", "板块", Icons.Outlined.GridView),
     Tab("me", "我的", Icons.Outlined.Person)
 )
 
@@ -71,7 +72,7 @@ fun AppRoot() {
         val snackbar = remember { SnackbarHostState() }
         val backStackEntry by nav.currentBackStackEntryAsState()
         val route = backStackEntry?.destination?.route
-        val showBar = route in setOf("home", "sites", "shelf", "me")
+        val showBar = route in setOf("home", "sites", "pinned", "me")
 
         val dark = when (state.settings.themeMode) {
             1 -> false
@@ -156,6 +157,16 @@ fun AppRoot() {
                             onOpenSite = { s -> nav.navigate("boards/${s.id}") },
                             onOpenWeb = { s -> nav.navigate(webRoute(s, s.baseUrl)) },
                             onLogin = { s -> nav.navigate("login/${s.id}") }
+                        )
+                    }
+
+                    composable("pinned") {
+                        PinnedBoardsScreen(
+                            state = state,
+                            onOpenBoard = { pin ->
+                                nav.navigate("threads/${pin.siteId}/${pin.fid}?name=${Uri.encode(pin.name)}")
+                            },
+                            onManage = { nav.navigate("sites") }
                         )
                     }
 

@@ -51,6 +51,23 @@ class Store(context: Context) {
 
     // ------------------------------------------------------------ 收藏 / 历史 / 已读
 
+    /** 固定到底栏「板块」页的版块 */
+    fun pinnedBoards(): List<PinnedBoard> {
+        val raw = sp.getString("pinned_boards", null) ?: return emptyList()
+        return runCatching {
+            val arr = JSONArray(raw)
+            (0 until arr.length()).mapNotNull { i ->
+                runCatching { arr.getJSONObject(i).toPinnedBoard() }.getOrNull()
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    fun savePinnedBoards(list: List<PinnedBoard>) {
+        val arr = JSONArray()
+        list.forEach { arr.put(it.toJson()) }
+        sp.edit().putString("pinned_boards", arr.toString()).apply()
+    }
+
     fun favorites(): List<ThreadSummary> = readThreads("favorites")
     fun saveFavorites(list: List<ThreadSummary>) = writeThreads("favorites", list)
 

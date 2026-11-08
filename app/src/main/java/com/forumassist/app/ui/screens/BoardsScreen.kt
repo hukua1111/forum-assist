@@ -22,9 +22,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Forum
+import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -149,8 +151,10 @@ fun BoardsScreen(
                         board = board,
                         siteColor = site.color,
                         blocked = false,
+                        pinned = state.isPinned(current.id, board.fid),
                         onOpen = { onOpenBoard(board) },
-                        onToggleBlock = { state.toggleBoardBlocked(current, board.fid) }
+                        onToggleBlock = { state.toggleBoardBlocked(current, board.fid) },
+                        onTogglePin = { state.togglePin(current, board) }
                     )
                 }
 
@@ -168,8 +172,10 @@ fun BoardsScreen(
                             board = board,
                             siteColor = site.color,
                             blocked = true,
+                            pinned = state.isPinned(current.id, board.fid),
                             onOpen = {},
-                            onToggleBlock = { state.toggleBoardBlocked(current, board.fid) }
+                            onToggleBlock = { state.toggleBoardBlocked(current, board.fid) },
+                            onTogglePin = { state.togglePin(current, board) }
                         )
                     }
                 }
@@ -183,8 +189,10 @@ private fun BoardRow(
     board: Board,
     siteColor: Int,
     blocked: Boolean,
+    pinned: Boolean,
     onOpen: () -> Unit,
-    onToggleBlock: () -> Unit
+    onToggleBlock: () -> Unit,
+    onTogglePin: () -> Unit
 ) {
     Surface(
         modifier = Modifier
@@ -243,6 +251,16 @@ private fun BoardRow(
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                    )
+                }
+            }
+            if (!blocked) {
+                IconButton(onClick = onTogglePin, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        imageVector = if (pinned) Icons.Rounded.Star else Icons.Outlined.StarBorder,
+                        contentDescription = if (pinned) "取消固定到底栏" else "固定到底栏板块",
+                        tint = if (pinned) Color(siteColor) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        modifier = Modifier.size(19.dp)
                     )
                 }
             }

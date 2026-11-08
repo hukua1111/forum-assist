@@ -98,8 +98,8 @@ fun HomeScreen(
                 )
                 state.feed.isEmpty() -> EmptyState(
                     title = "还没有帖子",
-                    desc = "下拉刷新试试，或者去添加更多论坛站点",
-                    actionLabel = "管理站点",
+                    desc = "下拉刷新试试，或者去「论坛」把常看的版块固定到底栏板块",
+                    actionLabel = "去论坛",
                     onAction = onOpenSites
                 )
                 else -> LazyColumn(
@@ -204,7 +204,7 @@ private fun HomeHeader(state: AppState, onSearch: () -> Unit, onOpenSites: () ->
 
 @Composable
 private fun FeedTabs(state: AppState) {
-    val tabs = listOf("最新主题", "最新回复", "热帖", "精华")
+    val tabs = listOf("最新主题", "最新回复", "热帖")
     Row(
         modifier = Modifier
             .fillMaxWidth()
