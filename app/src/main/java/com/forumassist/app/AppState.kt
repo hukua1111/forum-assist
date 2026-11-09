@@ -105,7 +105,7 @@ class AppState(context: Context) {
         favorites.addAll(store.favorites())
         offline.addAll(store.offlineList())
         history.addAll(store.history())
-        readMarks.putAll(store.readMarks())
+        store.readMarks().entries.toList().takeLast(1_000).forEach { (key, value) -> readMarks[key] = value }
 
         // 固定的版块：站点已被删除的条目一并清掉
         val ids = sites.map { it.id }.toSet()
@@ -916,7 +916,12 @@ class AppState(context: Context) {
     fun isRead(key: String): Boolean = settings.readGray && readMarks.containsKey(key)
 
     fun markRead(t: ThreadSummary) {
+        readMarks.remove(t.key)
         readMarks[t.key] = t.replies
+        while (readMarks.size > 1_000) {
+            val oldest = readMarks.keys.firstOrNull() ?: break
+            readMarks.remove(oldest)
+        }
         store.saveReadMarks(readMarks)
         history.removeAll { it.key == t.key }
         history.add(0, t)

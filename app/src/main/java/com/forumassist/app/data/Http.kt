@@ -90,8 +90,8 @@ class Http(private val store: Store) {
         // 图片一多就会把列表请求饿死，界面看起来就是「一直转圈」。
         .dispatcher(
             okhttp3.Dispatcher().apply {
-                maxRequests = 64
-                maxRequestsPerHost = 16
+                maxRequests = 24
+                maxRequestsPerHost = 6
             }
         )
         .connectTimeout(12, TimeUnit.SECONDS)

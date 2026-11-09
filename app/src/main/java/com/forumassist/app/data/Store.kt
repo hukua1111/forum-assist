@@ -37,6 +37,11 @@ data class CookieRec(
 class Store(context: Context) {
 
     private val app = context.applicationContext
+
+    companion object {
+        private const val MAX_READ_MARKS = 1_000
+        private const val MAX_DETAIL_CACHE_BYTES = 64L * 1024 * 1024
+    }
     private val sp = app.getSharedPreferences("forum_assist", Context.MODE_PRIVATE)
 
     // ------------------------------------------------------------ 站点
@@ -113,7 +118,11 @@ class Store(context: Context) {
 
     fun saveReadMarks(map: Map<String, Int>) {
         val obj = JSONObject()
-        map.forEach { (k, v) -> obj.put(k, v) }
+        // Keep only recent reads so this preference stays bounded over long-term use.
+        map.entries
+            .asSequence()
+            .takeLast(MAX_READ_MARKS)
+            .forEach { (k, v) -> obj.put(k, v) }
         sp.edit().putString("read_marks", obj.toString()).apply()
     }
 
@@ -253,7 +262,24 @@ class Store(context: Context) {
             o.put("posts", detail.posts.toPostJsonArray())
             o.put("page", detail.page)
             o.put("totalPages", detail.totalPages)
-            detailCacheFile(detail.summary.siteId, detail.summary.tid).writeText(o.toString())
+            val target = detailCacheFile(detail.summary.siteId, detail.summary.tid)
+            target.writeText(o.toString())
+            trimDetailCache(target)
+        }
+    }
+
+    private fun trimDetailCache(newest: File) {
+        val files = detailCacheDir().listFiles()
+            ?.filter { it.isFile && it.extension == "json" }
+            ?.sortedBy { it.lastModified() }
+            .orEmpty()
+        var total = files.sumOf { it.length() }
+        for (file in files) {
+            if (total <= MAX_DETAIL_CACHE_BYTES) break
+            // Preserve the just-written item even if it alone exceeds the target budget.
+            if (file == newest) continue
+            val length = file.length()
+            if (file.delete()) total -= length
         }
     }
 
