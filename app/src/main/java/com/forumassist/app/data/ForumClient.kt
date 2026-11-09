@@ -154,7 +154,10 @@ class ForumClient(private val http: Http) {
      *  3) base64 混淆内容里解码出的域名
      * 候选按优先级逐个探测，命中论坛特征才采用，避免把发布页自身/镜像页/邮箱域名当站点。
      */
-    suspend fun resolveAddress(pageUrl: String): String? = withContext(Dispatchers.IO) {
+    suspend fun resolveAddress(pageUrl0: String): String? = withContext(Dispatchers.IO) {
+        val pageUrl = pageUrl0.trim().let {
+            if (it.startsWith("http", true)) it else "https://" + it.removePrefix("//")
+        }
         val html = run {
             var h = http.get(pageUrl)
             if (h == null && pageUrl.startsWith("https://", true)) {
@@ -292,10 +295,14 @@ class ForumClient(private val http: Http) {
     }
 
     /** 跟随发布页跳转链，最多 6 跳；顺序为「起页 → … → 落地页」 */
-    private fun followPublisherChain(start: String): List<PublisherHop> {
+    private fun followPublisherChain(start0: String): List<PublisherHop> {
         val hops = mutableListOf<PublisherHop>()
         val visited = HashSet<String>()
-        var cur: String? = start
+        // 老版本把发布页存成了没有 scheme 的 www.xxx.com，这里统一补齐，
+        // 否则 OkHttp 直接抛 IllegalArgumentException，地址刷新每次都失败
+        var cur: String? = start0.trim().let {
+            if (it.startsWith("http", true)) it else "https://" + it.removePrefix("//")
+        }
         while (cur != null && hops.size < 6 && visited.add(cur)) {
             var html = http.get(cur, allowErrorBody = true)
             if (html == null && cur.startsWith("https://", true)) {

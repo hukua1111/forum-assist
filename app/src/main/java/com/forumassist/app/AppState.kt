@@ -90,7 +90,13 @@ class AppState(context: Context) {
         run {
             var changed = false
             val fixed = sites.map { s ->
-                if (s.addressPage.isNotBlank()) s else {
+                // 旧版本可能把发布页存成 www.xxx.com（没 scheme），刷新地址时会直接抛异常
+                var v = s
+                if (v.addressPage.isNotBlank() && !v.addressPage.startsWith("http", true)) {
+                    changed = true
+                    v = v.copy(addressPage = "https://" + v.addressPage.removePrefix("//"))
+                }
+                if (v.addressPage.isNotBlank()) v else {
                     val known = KNOWN_ADDRESS_PAGES.firstOrNull { (key, _) ->
                         s.baseUrl.contains(key, true)
                     }?.second
