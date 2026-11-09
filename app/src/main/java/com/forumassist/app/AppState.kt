@@ -77,9 +77,9 @@ class AppState(context: Context) {
     private val boardCache = mutableMapOf<String, List<Board>>()
 
     init {
-        // 只保留「尚香书苑」：老版本装过的其他预设站点做一次性清理
+        // 只保留「尚香书苑 / 搜书吧」：老版本装过的其他预设站点做一次性清理
         val loaded = store.sites()
-        val kept = loaded.filter { isShangxiang(it) }
+        val kept = loaded.filter { isPresetSite(it) }
         if (kept.size != loaded.size) store.saveSites(kept)
         sites.addAll(kept)
         if (sites.isEmpty()) {
@@ -90,10 +90,15 @@ class AppState(context: Context) {
         run {
             var changed = false
             val fixed = sites.map { s ->
-                if (s.addressPage.isBlank() && s.baseUrl.contains("sxsy", true)) {
-                    changed = true
-                    s.copy(addressPage = "https://sxsy.org/")
-                } else s
+                if (s.addressPage.isNotBlank()) s else {
+                    val known = KNOWN_ADDRESS_PAGES.firstOrNull { (key, _) ->
+                        s.baseUrl.contains(key, true)
+                    }?.second
+                    if (known == null) s else {
+                        changed = true
+                        s.copy(addressPage = known)
+                    }
+                }
             }
             if (changed) {
                 sites.clear()
@@ -141,6 +146,15 @@ class AppState(context: Context) {
     private fun isShangxiang(site: Site): Boolean =
         site.name.contains("尚香") || site.baseUrl.contains("sxsy", ignoreCase = true)
 
+    /** 搜书吧判定：域名会换成 bew2459m / allshu 这类中转域，所以名称与多个域名特征都要认 */
+    private fun isSoushu(site: Site): Boolean =
+        site.name.contains("搜书吧") || site.baseUrl.contains("soushu", ignoreCase = true) ||
+            site.baseUrl.contains("bew2459m", ignoreCase = true) ||
+            site.baseUrl.contains("allshu", ignoreCase = true)
+
+    /** 预设站点（老版本清理时只保留这些） */
+    private fun isPresetSite(site: Site): Boolean = isShangxiang(site) || isSoushu(site)
+
     private fun defaultSites(): List<Site> = listOf(
         Site(
             name = "尚香书苑",
@@ -149,6 +163,14 @@ class AppState(context: Context) {
             color = 0xFF9C36B5.toInt(),
             // 域名经常更换，从地址发布页自动解析最新可用地址
             addressPage = "https://sxsy.org/"
+        ),
+        Site(
+            name = "搜书吧",
+            baseUrl = "https://nyt6y.bew2459m.com",
+            kind = SiteKind.DISCUZ,
+            color = 0xFF0CA678.toInt(),
+            // 永久地址 → 中转域名 → 落地页「最新地址」，由 resolveAddressByChain 逐跳跟随
+            addressPage = "http://www.soushu2030.com/"
         )
     )
 
@@ -569,7 +591,12 @@ class AppState(context: Context) {
         if (resolvingAddress) { onDone?.invoke(null); return }
         scope.launch {
             resolvingAddress = true
-            val resolved = client.resolveAddress(site.addressPage)
+            // 声明了 chainPublisher 的站点（搜书吧）走多级跳转解析，其余站点保持原来的单页解析
+            val resolved = if (site.profile.chainPublisher) {
+                client.resolveAddressByChain(site.addressPage)
+            } else {
+                client.resolveAddress(site.addressPage)
+            }
             resolvingAddress = false
             if (resolved != null && resolved.trimEnd('/') != site.baseUrl.trimEnd('/')) {
                 updateSite(site.copy(baseUrl = resolved))
@@ -952,5 +979,18 @@ class AppState(context: Context) {
         feedTabs.clear()
         feed.clear()
         notify(if (ok) "缓存已清理（含正文与图片）" else "已清理，部分文件被占用")
+    }
+
+    private companion object {
+        /**
+         * 已知站点的「永久地址 / 地址发布页」。
+         * key 用于匹配站点域名片段，老版本添加过的站点启动时自动补齐，换域名不用手动改。
+         */
+        val KNOWN_ADDRESS_PAGES = listOf(
+            "sxsy" to "https://sxsy.org/",
+            "soushu" to "http://www.soushu2030.com/",
+            "bew2459m" to "http://www.soushu2030.com/",
+            "allshu" to "http://www.soushu2030.com/"
+        )
     }
 }

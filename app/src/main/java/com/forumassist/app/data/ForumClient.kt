@@ -95,7 +95,11 @@ class ForumClient(private val http: Http) {
 
     suspend fun guide(site: Site, view: String, page: Int): List<ThreadSummary> =
         withContext(Dispatchers.IO) {
-            val url = pageUrl(site, "forum.php?mod=guide&view=$view", page)
+            // 「最新回复」在 Discuz 导读里的 view 是 new，个别模板不认 newreply（会退回热门）。
+            // 只有 profile 显式声明的站点才替换，其余站点沿用调用方传入的 view。
+            val profile = site.profile
+            val guideView = profile.guideReplyView.takeIf { it.isNotBlank() && view == "newreply" } ?: view
+            val url = pageUrl(site, "forum.php?mod=guide&view=$guideView", page)
             var html = http.get(url, desktop = true)
             if (html == null || isServerErrorPage(html)) html = http.get(url)
             if (html == null) {
@@ -256,6 +260,110 @@ class ForumClient(private val http: Http) {
             html.contains("尚香") || (h.contains("powered by") && h.contains("php"))
     }
 
+    // ------------------------------------------- 地址发布页：多级跳转（仅 chainPublisher 站点使用）
+
+    private data class PublisherHop(val url: String, val html: String)
+
+    /** scheme://host[:port]，保留端口（个别站点的论坛跑在非标准端口上） */
+    private fun rootOf(url: String): String? = runCatching {
+        val u = java.net.URL(url)
+        val port = if (u.port > 0 && u.port != u.defaultPort) ":${u.port}" else ""
+        "${u.protocol}://${u.host}$port"
+    }.getOrNull()
+
+    /**
+     * 发布页常见的跳转方式：<meta http-equiv=refresh content="0.1;url=...">、location.href、location.replace。
+     * 这类跳转壳经常返回 403/404，正文仍要读，所以走 allowErrorBody。
+     */
+    private fun nextHop(html: String, baseUrl: String): String? {
+        val meta = Regex(
+            "<meta[^>]+http-equiv\\s*=\\s*[\"']?refresh[\"']?[^>]*content\\s*=\\s*[\"'][^\"']*url\\s*=\\s*([^\"'>\\s]+)",
+            RegexOption.IGNORE_CASE
+        ).find(html)?.groupValues?.get(1)
+        val js = Regex(
+            "(?:window\\.)?location(?:\\.href)?\\s*=\\s*[\"']([^\"']+)[\"']",
+            RegexOption.IGNORE_CASE
+        ).find(html)?.groupValues?.get(1)
+            ?: Regex("location\\.replace\\(\\s*[\"']([^\"']+)[\"']\\s*\\)", RegexOption.IGNORE_CASE)
+                .find(html)?.groupValues?.get(1)
+        val raw = (meta ?: js)?.trim()?.replace("&amp;", "&") ?: return null
+        if (raw.startsWith("javascript:", true)) return null
+        return runCatching { java.net.URL(java.net.URL(baseUrl), raw).toString() }.getOrNull()
+    }
+
+    /** 跟随发布页跳转链，最多 6 跳；顺序为「起页 → … → 落地页」 */
+    private fun followPublisherChain(start: String): List<PublisherHop> {
+        val hops = mutableListOf<PublisherHop>()
+        val visited = HashSet<String>()
+        var cur: String? = start
+        while (cur != null && hops.size < 6 && visited.add(cur)) {
+            var html = http.get(cur, allowErrorBody = true)
+            if (html == null && cur.startsWith("https://", true)) {
+                // 有些发布页只开了 http
+                val plain = "http://" + cur.removePrefix("https://")
+                if (visited.add(plain)) html = http.get(plain, allowErrorBody = true)
+            }
+            if (html == null) break
+            hops.add(PublisherHop(cur, html))
+            cur = nextHop(html, cur)
+        }
+        return hops
+    }
+
+    /**
+     * 多级跳转式发布页（搜书吧：永久地址 → 中转域名 → 落地页「最新地址」）。
+     * 与通用 [resolveAddress] 完全独立，只有 SiteProfile.chainPublisher 的站点会走这里。
+     */
+    suspend fun resolveAddressByChain(pageUrl: String): String? = withContext(Dispatchers.IO) {
+        val hops = followPublisherChain(pageUrl)
+        if (hops.isEmpty()) return@withContext null
+
+        // 某一跳已经落到论坛上，直接用
+        hops.firstOrNull { looksLikeForum(it.html) }?.let { return@withContext rootOf(it.url) }
+
+        // 从最后一跳往前找：「最新地址 / 进入 / 访问」按钮通常在落地页上。
+        // 倒序是为了防止落地页后面还挂着广告跳转，导致最后一跳不是真正的落地页。
+        val chainUrls = hops.map { it.url }
+        for (hop in hops.asReversed()) {
+            pickAddressLink(hop.html, hop.url, chainUrls)?.let { return@withContext it }
+        }
+
+        // 兜底：仍交给通用解析器（它认得 JS 配置项、base64 等写法）
+        resolveAddress(hops.last().url)
+    }
+
+    /** 从落地页里挑「最新地址」类链接并逐个探测，返回可用的站点根地址 */
+    private fun pickAddressLink(html: String, baseUrl: String, chainUrls: List<String>): String? {
+        val chainHosts = chainUrls.mapNotNull { runCatching { java.net.URL(it).host }.getOrNull() }
+            .map { it.lowercase() }
+            .toSet()
+        val doc = Jsoup.parse(html, baseUrl)
+        val candidates = doc.select("a[href]").mapNotNull { a ->
+            val raw = a.attr("href").trim()
+            if (raw.isEmpty() || raw.startsWith("javascript", true) || raw.startsWith("#") ||
+                raw.startsWith("mailto", true) || raw.startsWith("tel", true)
+            ) return@mapNotNull null
+            val hint = (a.text() + " " + a.attr("id") + " " + a.attr("class")).lowercase()
+            val preferred = hint.contains("最新") || hint.contains("进入") || hint.contains("访问") ||
+                hint.contains("地址") || hint.contains("enter") || hint.contains("domain")
+            val abs = runCatching { a.absUrl("href") }.getOrDefault("")
+            if (!abs.startsWith("http")) return@mapNotNull null
+            val host = runCatching { java.net.URL(abs).host }.getOrNull()?.lowercase().orEmpty()
+            if (host.isBlank() || host in chainHosts || isNoiseHost(host)) return@mapNotNull null
+            (if (preferred) 0 else 1) to abs
+        }.sortedBy { it.first }.map { it.second }
+
+        for (url in candidates.distinct().take(8)) {
+            val root = rootOf(url) ?: continue
+            if (looksLikeForum(http.get("$root/", allowErrorBody = true).orEmpty())) return root
+            if (root.startsWith("https://")) {
+                val plain = "http://" + root.removePrefix("https://")
+                if (looksLikeForum(http.get("$plain/", allowErrorBody = true).orEmpty())) return plain
+            }
+        }
+        return null
+    }
+
     // ------------------------------------------------- 首页门户四格（最新主题/最新回复/热帖/精华）
 
     /** 首页三个分栏一次抓下来的结果（view 顺序：newthread / newreply / hot） */
@@ -281,6 +389,16 @@ class ForumClient(private val http: Http) {
      */
     suspend fun portalBundle(site: Site): PortalBundle = withContext(Dispatchers.IO) {
         val base = site.baseUrl.trimEnd('/')
+
+        // 搜书吧这类模板：四格只给截断标题、没有作者/时间/回复，信息量不如导读。
+        // 只对该站点改用「导读三视图」组装首页，其他站点仍旧走四格，行为不变。
+        if (site.profile.guideBundle) {
+            return@withContext PortalBundle(
+                newthread = guide(site, "newthread", 1),
+                newreply = guide(site, "newreply", 1),
+                hot = guide(site, "hot", 1)
+            )
+        }
 
         fun bundleFrom(html: String): PortalBundle {
             val pc = PortalBundle(
@@ -406,6 +524,7 @@ class ForumClient(private val http: Http) {
 
         val slide = doc.select("#tabs-box .swiper-slide").getOrNull(index) ?: return emptyList()
         val out = LinkedHashMap<String, ThreadSummary>()
+        val profile = site.profile
         for (a in slide.select("li a[href]")) {
             val href = a.attr("href")
             val tid = tidOf(href) ?: continue
@@ -438,7 +557,8 @@ class ForumClient(private val http: Http) {
                 views = views,
                 lastTime = timeRaw,
                 ts = TimeUtil.parse(timeRaw),
-                url = runCatching { a.absUrl("href") }.getOrDefault("").ifBlank { href }
+                url = if (profile.normalizeRedirect) threadUrl(a, site, tid, href)
+                else runCatching { a.absUrl("href") }.getOrDefault("").ifBlank { href }
             )
         }
         return out.values.toList()
@@ -457,6 +577,7 @@ class ForumClient(private val http: Http) {
             ?: return emptyList()
 
         val out = LinkedHashMap<String, ThreadSummary>()
+        val profile = site.profile
         for (a in box.select("ul.category_newlist li a, li a")) {
             val href = a.attr("href")
             val tid = tidOf(href) ?: continue
@@ -466,7 +587,10 @@ class ForumClient(private val http: Http) {
             // 注意：标题里本身常含「作者：」（书名+作者），必须按 <br> 分段解析，
             // 否则正则会把标题截断到正文里的「作者：」处，作者也会取错。
             val meta = parseTip(a.attr("tip"))
-            val title = meta.title.ifBlank { a.text().trim().ifBlank { a.attr("title").trim() } }
+            val title = meta.title.ifBlank {
+                if (profile.titleFromAttr) fullTitle(a)
+                else a.text().trim().ifBlank { a.attr("title").trim() }
+            }
             if (title.length < 2) continue
 
             val author = meta.author
@@ -491,7 +615,8 @@ class ForumClient(private val http: Http) {
                 views = views,
                 lastTime = timeRaw,
                 ts = TimeUtil.parse(timeRaw),
-                url = runCatching { a.absUrl("href") }.getOrDefault("").ifBlank { href },
+                url = if (profile.normalizeRedirect) threadUrl(a, site, tid, href)
+                else runCatching { a.absUrl("href") }.getOrDefault("").ifBlank { href },
                 tags = tags
             )
         }
@@ -689,11 +814,13 @@ class ForumClient(private val http: Http) {
             "新窗口打开", "查看", "回复", "收藏", "分享", "更多", "返回", "上一页", "下一页",
             "永久地址", "每日签到", "积分充值", "排行榜", "登录", "注册", "找回密码"
         )
+        // 只有 profile 声明了 titleFromAttr 的站点（搜书吧）才用 title 属性补全被截断的标题
+        val profile = site.profile
 
         for (a in links) {
             val href = a.attr("href")
             val tid = tidOf(href) ?: continue
-            var title = a.text().trim()
+            var title = if (profile.titleFromAttr) fullTitle(a) else a.text().trim()
             if (title.length < 3) title = a.attr("title").trim()
             if (title.length < 3) continue
             if (title in noiseTitles || title.contains("新窗口打开")) continue
@@ -764,7 +891,8 @@ class ForumClient(private val http: Http) {
                 isDigest = isDigest,
                 isNew = isNew,
                 ts = ts,
-                url = runCatching { a.absUrl("href") }.getOrDefault("").ifBlank { href },
+                url = if (profile.normalizeRedirect) threadUrl(a, site, tid, href)
+                else runCatching { a.absUrl("href") }.getOrDefault("").ifBlank { href },
                 typeName = typeName,
                 tags = tags
             )
@@ -784,7 +912,11 @@ class ForumClient(private val http: Http) {
             // 部分站点（如尚香书苑）手机模板无 post_ 容器，且链接带签名，自己拼 URL 会拿不到正文。
             val candidates = buildList {
                 val raw = rawUrl?.trim().orEmpty()
-                if (raw.isNotEmpty() && page <= 1) {
+                // 声明了 normalizeRedirect 的站点：「最新回复」给的是 redirect&goto=lastpost，
+                // 直接请求会落到末页，不能当详情入口；其他站点照旧优先用原始链接
+                val skipRaw = site.profile.normalizeRedirect &&
+                    (raw.contains("mod=redirect", true) || raw.contains("goto=lastpost", true))
+                if (raw.isNotEmpty() && !skipRaw && page <= 1) {
                     add(if (raw.startsWith("http")) raw else u(site, raw))
                 }
                 add(pageUrl(site, "forum.php?mod=viewthread&tid=$tid", page))
@@ -1265,6 +1397,22 @@ class ForumClient(private val http: Http) {
         }
 
     // ---------------------------------------------------------------- 工具
+
+    /** 列表标题常被模板截断成「《书名…》…」，title 属性里才是全名（仅允许的站点调用） */
+    private fun fullTitle(a: Element): String {
+        val text = a.text().trim()
+        val tip = a.attr("title").trim()
+        val usable = tip.length > text.length && !tip.contains("新窗口打开") && tip.length <= 120
+        return if (usable) tip else text.ifBlank { tip }
+    }
+
+    /** 「最新回复」条目指向 redirect&goto=lastpost，直接请求会落到末页，统一改回标准详情地址 */
+    private fun threadUrl(a: Element, site: Site, tid: String, href: String): String {
+        if (href.contains("mod=redirect", true) || href.contains("goto=lastpost", true)) {
+            return u(site, "forum.php?mod=viewthread&tid=$tid")
+        }
+        return runCatching { a.absUrl("href") }.getOrDefault("").ifBlank { href }
+    }
 
     private fun tidOf(href: String): String? {
         Regex("tid=(\\d+)").find(href)?.let { return it.groupValues[1] }

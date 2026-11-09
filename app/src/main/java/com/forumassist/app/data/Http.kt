@@ -8,7 +8,10 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.nio.charset.Charset
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import kotlin.text.charset
 
 /**
  * 每个「主机」独立的 Cookie 容器，退出 App 后仍然保留登录态。
@@ -119,7 +122,44 @@ class Http(private val store: Store) {
 
     private val desktopUa = ua
 
-    fun get(url: String, referer: String? = null, desktop: Boolean = false): String? {
+    /**
+     * 站点编码缓存（按主机）。
+     * 搜书吧这类 Discuz 老站是 GBK：解析要按 GBK 解码，登录/回帖的表单也必须用 GBK 编码提交，
+     * 否则中文标题、中文正文、中文账号全都会变成乱码。响应头带 charset 时会自动学到。
+     */
+    private val charsetCache = ConcurrentHashMap<String, Charset>()
+
+    fun charsetFor(host: String): Charset = charsetCache[host] ?: Charsets.UTF_8
+
+    private fun rememberCharset(host: String, cs: Charset) {
+        if (host.isNotBlank()) charsetCache[host] = cs
+    }
+
+    /**
+     * 按「响应头 charset → 页面 <meta charset> → 该主机学到的编码 → UTF-8」的顺序解码。
+     * Discuz 的 inajax 接口经常只回 text/xml 不带 charset，这时只能靠 meta 或历史记录。
+     */
+    private fun decode(bytes: ByteArray, declared: Charset?, host: String): String {
+        if (declared != null) {
+            rememberCharset(host, declared)
+            return String(bytes, declared)
+        }
+        val head = String(bytes, Charsets.ISO_8859_1).take(3000)
+        val name = Regex("charset\\s*=\\s*[\"']?([a-zA-Z0-9_:\\-]+)", RegexOption.IGNORE_CASE)
+            .find(head)?.groupValues?.get(1)
+        val sniffed = runCatching { name?.let { charset(it) } }.getOrNull()
+        val cs = sniffed ?: charsetCache[host] ?: Charsets.UTF_8
+        if (sniffed != null) rememberCharset(host, sniffed)
+        return String(bytes, cs)
+    }
+
+    fun get(
+        url: String,
+        referer: String? = null,
+        desktop: Boolean = false,
+        /** 地址发布页常用 403/404 + meta 跳转，这种「错误页」的正文也要能读到 */
+        allowErrorBody: Boolean = false
+    ): String? {
         val started = System.currentTimeMillis()
         return try {
             val builder = Request.Builder().url(url).get()
@@ -128,13 +168,15 @@ class Http(private val store: Store) {
                 .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
             referer?.let { builder.header("Referer", it) }
             okHttpClient.newCall(builder.build()).execute().use { resp ->
-                val body = resp.body?.string()
+                val bytes = resp.body?.bytes()
+                val body = if (bytes == null || bytes.isEmpty()) null
+                else decode(bytes, resp.body?.contentType()?.charset(), resp.request.url.host)
                 val cost = System.currentTimeMillis() - started
                 AppLog.d(
                     "HTTP",
                     "GET ${resp.code} ${body?.length ?: 0}B ${cost}ms ${shortUrl(resp.request.url.toString())}"
                 )
-                if (!resp.isSuccessful) null else body
+                if (!resp.isSuccessful && !allowErrorBody) null else body
             }
         } catch (t: Throwable) {
             val cost = System.currentTimeMillis() - started
@@ -193,9 +235,13 @@ class Http(private val store: Store) {
     }.getOrNull()
 
     fun post(url: String, form: Map<String, String>, referer: String? = null): String? = try {
+        // 表单编码跟随站点编码：GBK 站点提交 UTF-8 中文会变乱码（登录/回帖/发帖都会失败）
+        val host = runCatching { java.net.URL(url).host }.getOrDefault("")
+        val cs = charsetFor(host)
         val body = form.entries.joinToString("&") {
-            "${java.net.URLEncoder.encode(it.key, "UTF-8")}=${java.net.URLEncoder.encode(it.value, "UTF-8")}"
-        }.toRequestBody("application/x-www-form-urlencoded; charset=UTF-8".toMediaType())
+            "${java.net.URLEncoder.encode(it.key, cs.name())}=" +
+                java.net.URLEncoder.encode(it.value, cs.name())
+        }.toRequestBody("application/x-www-form-urlencoded; charset=${cs.name()}".toMediaType())
         val builder = Request.Builder().url(url).post(body)
             .header("User-Agent", ua)
             .header("Accept-Language", "zh-CN,zh;q=0.9")
@@ -203,7 +249,8 @@ class Http(private val store: Store) {
         referer?.let { builder.header("Referer", it) }
         okHttpClient.newCall(builder.build()).execute().use { resp ->
             AppLog.d("HTTP", "POST ${resp.code} ${shortUrl(resp.request.url.toString())}")
-            resp.body?.string()
+            val bytes = resp.body?.bytes() ?: return@use null
+            decode(bytes, resp.body?.contentType()?.charset(), host)
         }
     } catch (t: Throwable) {
         AppLog.e("HTTP", "POST 失败 ${shortUrl(url)}", t)

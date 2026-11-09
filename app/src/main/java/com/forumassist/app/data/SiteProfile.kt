@@ -19,7 +19,20 @@ data class SiteProfile(
     /** 详情内存缓存（短 TTL），返回再进不用重新抓 */
     val cacheDetail: Boolean = false,
     /** 附件点击走站内 WebView（带登录态），而不是丢给外部浏览器 */
-    val openAttachmentInApp: Boolean = false
+    val openAttachmentInApp: Boolean = false,
+
+    // ---------------------------------------------------------------- 搜书吧类模板（列表/发布页差异）
+
+    /** 首页四格只有标题（无作者/时间/回复），改用「导读」三个视图组装首页 */
+    val guideBundle: Boolean = false,
+    /** 列表标题被模板截断成「…」，完整书名在 title 属性里 */
+    val titleFromAttr: Boolean = false,
+    /** 「最新回复」条目是 redirect&goto=lastpost，需要还原成标准详情地址 */
+    val normalizeRedirect: Boolean = false,
+    /** 导读里「最新回复」的 view 参数（Discuz 官方是 new，不是 newreply） */
+    val guideReplyView: String = "",
+    /** 地址发布页是多级跳转（永久地址 → 中转域名 → 落地页「最新地址」） */
+    val chainPublisher: Boolean = false
 ) {
     companion object {
         val Default = SiteProfile()
@@ -34,9 +47,29 @@ data class SiteProfile(
             openAttachmentInApp = true
         )
 
+        /**
+         * 搜书吧：Discuz X3.4 + GBK + 自定义模板。
+         * 四格只有截断标题、没有作者/时间，所以首页改读「导读」；
+         * 「最新回复」给的是 redirect&goto=lastpost，要还原成详情地址才能读到正文。
+         * 只开这几项，附件/正文仍走通用逻辑，不影响别的站点。
+         */
+        val Soushu = SiteProfile(
+            guideBundle = true,
+            titleFromAttr = true,
+            normalizeRedirect = true,
+            guideReplyView = "new",
+            chainPublisher = true
+        )
+
         fun of(site: Site?): SiteProfile {
             if (site == null) return Default
             // 站点会被「地址发布页」换成新域名，所以名称和域名都要判断
+            val soushu = site.name.contains("搜书吧") ||
+                site.baseUrl.contains("soushu", ignoreCase = true) ||
+                site.baseUrl.contains("bew2459m", ignoreCase = true) ||
+                site.baseUrl.contains("allshu", ignoreCase = true)
+            if (soushu) return Soushu
+
             val hit = site.name.contains("尚香") || site.baseUrl.contains("sxsy", ignoreCase = true)
             return if (hit) Shangxiang else Default
         }
