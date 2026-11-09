@@ -120,7 +120,7 @@ class Store(context: Context) {
         val obj = JSONObject()
         // Keep only recent reads so this preference stays bounded over long-term use.
         map.entries
-            .asSequence()
+            .toList()
             .takeLast(MAX_READ_MARKS)
             .forEach { (k, v) -> obj.put(k, v) }
         sp.edit().putString("read_marks", obj.toString()).apply()

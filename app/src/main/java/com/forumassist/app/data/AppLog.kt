@@ -110,9 +110,11 @@ object AppLog {
         }
     }
 
-    private fun appendBatch(lines: List<String>) {
+    private fun appendBatch(entries: List<QueuedLog>) {
         val f = file ?: return
         synchronized(clearLock) {
+            val lines = entries.filter { it.generation == generation }.map { it.line }
+            if (lines.isEmpty()) return
             synchronized(diskLock) {
                 runCatching {
                     if (f.length() > MAX_BYTES) {
@@ -151,7 +153,7 @@ object AppLog {
                 }
                 val line = "${synchronized(dateFormatLock) { fmt.format(Date()) }} D/日志: ===== 已清空 ====="
                 buffer.addLast(line)
-                enqueue(line)
+                enqueue(QueuedLog(generation, line))
             }
         }
     }
