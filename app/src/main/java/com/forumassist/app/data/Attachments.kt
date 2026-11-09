@@ -53,8 +53,32 @@ object Attachments {
         for (dl in scope.select("div.pattl dl.tattl, dl.tattl")) {
             val link = dl.selectFirst("p.attnm a[href], .attnm a[href]")
             if (link == null) {
-                // 图片型附件没有文件名链接，直接取图片地址
-                val img = dl.selectFirst("img") ?: continue
+                // nayuan_attach_beautify 这类附件美化插件：附件名在 span.attachname
+                //（可能没有 <a> 包裹），下载按钮在 p.buttons；dt 里只有 32px 的文件类型
+                // 图标。以前走到这里会把图标 img 当成帖子图片 → 评论区出现「图片加载失败」
+                // 卡片，点重试后小图标被拉伸成满宽的绿色模糊图。
+                val img = dl.selectFirst("img")
+                val iconLike = img != null && run {
+                    val s = img.attr("src")
+                    s.contains("filetype", true) || s.contains("source/plugin", true) ||
+                        s.contains("static/image", true) ||
+                        (img.attr("width").toIntOrNull() ?: 0) in 1..48
+                }
+                if (img == null || iconLike) {
+                    // 图标不是内容图：按「文件附件」处理，给出附件名 + 下载链接
+                    val name = dl.selectFirst(".attachname")?.text()?.trim()
+                        ?: dl.selectFirst(".attnm")?.text()?.trim()
+                        ?: dl.selectFirst(".filename")?.text()?.trim()
+                    val anchor = dl.selectFirst(
+                        "a[href*=mod=attachment], a[id^=aid][href], p.buttons a[href], a[href*=attachpay]"
+                    )
+                    val href = anchor?.attr("href")?.trim().orEmpty()
+                    if (!name.isNullOrBlank() && href.startsWith("http") && seen.add(name + "|" + href)) {
+                        out.add(Block.File(name = cleanName(name), url = absolute(href, baseUrl), meta = metaOf(dl)))
+                    }
+                    continue
+                }
+                // 真图片附件（标准缩略图布局）：直接取图片地址
                 val url = absolute(firstSrc(img), baseUrl)
                 if (url.isNotBlank() && seen.add(url)) out.add(Block.Image(url))
                 continue

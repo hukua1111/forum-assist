@@ -1072,12 +1072,17 @@ private fun PostImage(
         buildList { add(url); alts.forEach { if (it !in this) add(it) } }
     }
     var failed by remember(url) { mutableStateOf(false) }
+    // 所有候选都确认是占位小图时，整个图块直接不渲染——评论区明明没有图，
+    // 却显示「图片加载失败」或被拉伸的绿色小图标，就是这个场景
+    var hide by remember(url) { mutableStateOf(false) }
     var idx by remember(url) { mutableStateOf(0) }
     var attempt by remember(url) { mutableStateOf(0) }
     val current = candidates.getOrElse(idx) { url }
     // 有些站点的防盗链反过来：校验 Referer 必须是本站，带错反被打回占位图。
     // 所以带 Referer 失败后自动去掉 Referer 再试一次。
     var noReferer by remember(current, attempt) { mutableStateOf(false) }
+
+    if (hide) return
 
     if (failed) {
         Box(
@@ -1086,7 +1091,7 @@ private fun PostImage(
                 .heightIn(min = 88.dp)
                 .clip(RoundedCornerShape(12.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
-                .clickable { failed = false; idx = 0; attempt += 1 }
+                .clickable { failed = false; hide = false; idx = 0; attempt += 1 }
                 .padding(16.dp),
             contentAlignment = Alignment.Center
         ) {
@@ -1108,9 +1113,12 @@ private fun PostImage(
             .build()
     }
 
-    // 换下一个候选；都试完了才显示重试块
-    fun advance() {
-        if (idx + 1 < candidates.size) idx += 1 else failed = true
+    // 换下一个候选；fromSuccess=true 表示当前候选载入成功但确认是占位小图，
+    // 候选耗尽时整个块隐藏（而不是显示失败卡片或拉伸小图标）
+    fun advance(fromSuccess: Boolean = false) {
+        if (idx + 1 < candidates.size) idx += 1
+        else if (fromSuccess) hide = true
+        else failed = true
     }
 
     AsyncImage(
@@ -1122,14 +1130,15 @@ private fun PostImage(
             .clip(RoundedCornerShape(12.dp)),
         contentScale = ContentScale.FillWidth,
         onSuccess = { st ->
-            // 16x16 的「绿色刷新」占位图被拉伸满宽就是用户看到的样子；
-            // 载入成功但尺寸是这种小图标，直接当作占位图换下一个候选
+            // 16~48px 的「绿色刷新」占位图/文件类型图标被拉伸满宽就是用户看到的样子；
+            // 任何一次尝试里载入了这种小图都直接换下一个候选，
+            // 全部候选都是小图时整个图块不渲染
             val d = st.result.drawable
             val w = d.intrinsicWidth
             val h = d.intrinsicHeight
-            if (attempt == 0 && w in 1..48 && h in 1..48) {
+            if (w in 1..48 && h in 1..48) {
                 com.forumassist.app.data.AppLog.d("图片", "占位图 ${w}x${h} $current")
-                advance()
+                advance(fromSuccess = true)
             }
         },
         onError = {
