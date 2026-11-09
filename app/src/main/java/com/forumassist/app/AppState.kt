@@ -42,7 +42,7 @@ class AppState(context: Context) {
 
     val store = Store(context)
     val http = Http(store)
-    val client = ForumClient(http, store)
+    val client = ForumClient(http)
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     val sites: SnapshotStateList<Site> = mutableStateListOf()
@@ -311,11 +311,7 @@ class AppState(context: Context) {
                     .filterNot { it.isTop }
                     .filterNot { it.fid.isNotEmpty() && it.fid in blockedFidSet }
                     .distinctBy { it.key }
-                    // 首页按浏览量排：看得多的在前，同浏览量再按时间新→旧。
-                    // 四格没数字的站点（搜书吧）由 ForumClient 先从详情页补齐再进来。
-                    .sortedWith(
-                        compareByDescending<ThreadSummary> { it.views }.thenByDescending { it.ts }
-                    )
+                    .sortedByDescending { it.ts }
 
                 // 三个分栏在同一个首页里，第一页只发一次请求，解析出三份列表
                 var failed = 0
@@ -336,7 +332,9 @@ class AppState(context: Context) {
                                         ForumClient.PortalBundle()
                                     }
                                 } else ForumClient.PortalBundle()
-                                if (b.isEmpty()) {
+                                // 首页只有四格的站点（搜书吧）解析失败就显示失败，
+                                // 不能拿「导读」的另一批帖子顶上，否则内容和站点首页对不上
+                                if (b.isEmpty() && !s.profile.portalOnly) {
                                     // 站点没有门户四格：只补当前分栏一次 guide，不重复发三次
                                     val view = viewOfTab(feedTab)
                                     val one = try {
@@ -366,7 +364,7 @@ class AppState(context: Context) {
                     // 当前分栏空着就补一次 guide，别让用户切过来看到一片空白
                     if (perTab[feedTab].isEmpty() && bundles.any { !it.isEmpty() }) {
                         val fill = clean(
-                            enabled.flatMap { s ->
+                            enabled.filterNot { it.profile.portalOnly }.flatMap { s ->
                                 try {
                                     client.guide(s, viewOfTab(feedTab), 1)
                                 } catch (e: Exception) {

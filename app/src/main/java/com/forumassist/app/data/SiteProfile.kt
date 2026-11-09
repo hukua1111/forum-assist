@@ -23,12 +23,6 @@ data class SiteProfile(
 
     // ---------------------------------------------------------------- 搜书吧类模板（列表/发布页差异）
 
-    /**
-     * 首页四格只有标题、没有「查看/回复」（尚香的四格带 tip，数字齐全）。
-     * 打开后解析完四格会按 tid 去详情页补一次浏览量，结果本地缓存 12 小时；
-     * 四格自带数字的站点（尚香）不会走这条路，等于零开销。
-     */
-    val viewsFromDetail: Boolean = false,
     /** 首页只有一页四格、没有下一页（翻页时不再拿「导读」内容硬凑） */
     val portalOnly: Boolean = false,
     /** 列表标题被模板截断成「…」，完整书名在 title 属性里 */
@@ -55,13 +49,11 @@ data class SiteProfile(
 
         /**
          * 搜书吧：Discuz X3.4 + GBK + 自定义模板。
-         * 首页四格（最新主题 / 最新回复 / 热帖 / 精华）只有截断标题，
-         * 完整书名在 title 属性里、浏览量得去详情页补；
+         * 首页四格（最新主题 / 最新回复 / 热帖 / 精华）只有截断标题，完整书名在 title 属性里；
          * 「最新回复」给的是 redirect&goto=lastpost，要还原成详情地址才能读到正文。
          * 只开这几项，附件/正文仍走通用逻辑，不影响别的站点。
          */
         val Soushu = SiteProfile(
-            viewsFromDetail = true,
             portalOnly = true,
             titleFromAttr = true,
             normalizeRedirect = true,
