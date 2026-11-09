@@ -49,6 +49,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.forumassist.app.AppState
 import com.forumassist.app.data.Site
@@ -215,22 +216,28 @@ private fun SiteRow(
                         text = site.name,
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
                     )
                     Spacer(Modifier.width(6.dp))
                     TagPill(site.kind.label, androidx.compose.ui.graphics.Color(site.color))
                 }
                 Spacer(Modifier.height(3.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    // 域名长短差别很大（sxsy33.com / nyt6y.bew2459m.com）：
+                    // 让域名先收缩省略，登录标签保持单行，否则标签会被挤成一列竖字
                     Text(
                         text = site.host,
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
                     )
                     if (site.loggedIn) {
                         Spacer(Modifier.width(6.dp))
-                        TagPill("已登录 ${site.username ?: ""}", MaterialTheme.colorScheme.primary)
+                        TagPill(loginLabel(site), MaterialTheme.colorScheme.primary)
                     }
                 }
             }
@@ -282,6 +289,12 @@ private fun SiteRow(
             }
         }
     }
+}
+
+/** 登录标签：网页登录的账号就叫「网页账号」，没有信息量，只显示「已登录」 */
+private fun loginLabel(site: Site): String {
+    val u = site.username.orEmpty().trim()
+    return if (u.isBlank() || u == "网页账号") "已登录" else "已登录 · $u"
 }
 
 private fun Modifier.scaleSwitch() = this.then(Modifier.size(width = 40.dp, height = 26.dp))

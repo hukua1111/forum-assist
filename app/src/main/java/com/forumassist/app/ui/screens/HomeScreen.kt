@@ -206,7 +206,7 @@ private fun HomeHeader(state: AppState, onSearch: () -> Unit, onOpenSites: () ->
 
 @Composable
 private fun FeedTabs(state: AppState) {
-    val tabs = listOf("最新主题", "最新回复", "热帖")
+    val tabs = listOf("最新主题", "最新回复", "热帖", "精华")
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -227,9 +227,10 @@ private fun FeedTabs(state: AppState) {
             ) {
                 Text(
                     text = label,
-                    modifier = Modifier.padding(vertical = 8.dp),
+                    modifier = Modifier.padding(vertical = 9.dp),
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                    style = MaterialTheme.typography.labelLarge,
+                    // 四栏比三栏窄，字号降一档，「最新主题」才不会被挤成两行
+                    style = MaterialTheme.typography.labelMedium,
                     color = if (selected) MaterialTheme.colorScheme.onSurface
                     else MaterialTheme.colorScheme.onSurfaceVariant,
                     fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal

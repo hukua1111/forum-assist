@@ -74,6 +74,10 @@ fun TagPill(
             color = if (filled) Color.White else color,
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Medium,
+            // 标签永远单行：空间不够时省略，而不是一个字一行地竖排
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
         )
     }

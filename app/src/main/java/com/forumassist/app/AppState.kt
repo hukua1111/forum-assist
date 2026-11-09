@@ -125,7 +125,7 @@ class AppState(context: Context) {
         // 冷启动：先把上次的内容铺上（打开就有东西看），再在后台刷新一次。
         // 之后切页面/切分栏都只读缓存，不会自动刷。
         // 三个分栏的磁盘缓存一起铺上，冷启动切分栏也是瞬时的
-        for (i in 0..2) {
+        for (i in 0..3) {
             val cached = store.feedCache(i)
             if (cached.isNotEmpty()) feedTabs[i] = cached
         }
@@ -255,6 +255,7 @@ class AppState(context: Context) {
     private fun viewOfTab(tab: Int): String = when (tab) {
         1 -> "newreply"
         2 -> "hot"
+        3 -> "digest"
         else -> "newthread"
     }
 
@@ -343,6 +344,7 @@ class AppState(context: Context) {
                                     b = when (view) {
                                         "newreply" -> b.copy(newreply = one)
                                         "hot" -> b.copy(hot = one)
+                                        "digest" -> b.copy(digest = one)
                                         else -> b.copy(newthread = one)
                                     }
                                 }
@@ -352,7 +354,7 @@ class AppState(context: Context) {
                     }
                     // 整站一个分栏都没抓到，才算这个站点失败
                     failed = bundles.count { it.isEmpty() }
-                    val perTab = (0..2).map { idx ->
+                    val perTab = (0..3).map { idx ->
                         clean(bundles.flatMap { it.of(viewOfTab(idx)) })
                     }.toMutableList()
 
@@ -823,21 +825,29 @@ class AppState(context: Context) {
             ready
         }
 
-    suspend fun search(query: String): List<ThreadSummary> = withContext(Dispatchers.IO) {
-        val q = query.trim()
-        if (q.isEmpty()) return@withContext emptyList()
-        coroutineScope {
-            sites.filter { it.enabled }.map { site ->
-                async(Dispatchers.IO) {
-                    try {
-                        if (site.isDemo) Demo.search(q) else client.search(site, q)
-                    } catch (e: Exception) {
-                        emptyList()
+    /**
+     * 搜索帖子标题。
+     * @param siteId 非空时只搜这一个站点（「论坛 → 站点 → 搜索」就是这个用法），
+     *               空值才跨全部已启用站点搜索（首页搜索）。
+     */
+    suspend fun search(query: String, siteId: String? = null): List<ThreadSummary> =
+        withContext(Dispatchers.IO) {
+            val q = query.trim()
+            if (q.isEmpty()) return@withContext emptyList()
+            val targets = sites.filter { it.enabled && (siteId.isNullOrBlank() || it.id == siteId) }
+            if (targets.isEmpty()) return@withContext emptyList()
+            coroutineScope {
+                targets.map { site ->
+                    async(Dispatchers.IO) {
+                        try {
+                            if (site.isDemo) Demo.search(q) else client.search(site, q)
+                        } catch (e: Exception) {
+                            emptyList()
+                        }
                     }
-                }
-            }.awaitAll().flatten()
-        }.distinctBy { it.key }.sortedByDescending { it.ts }
-    }
+                }.awaitAll().flatten()
+            }.distinctBy { it.key }.sortedByDescending { it.ts }
+        }
 
     // ------------------------------------------------------------ 登录 / 发帖
 

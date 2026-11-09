@@ -47,8 +47,12 @@ import kotlinx.coroutines.launch
 fun SearchScreen(
     state: AppState,
     onBack: () -> Unit,
-    onOpenThread: (ThreadSummary) -> Unit
+    onOpenThread: (ThreadSummary) -> Unit,
+    /** 非空表示「只搜这个站点」（从站点页进来）；空串是首页的跨站搜索 */
+    siteId: String = ""
 ) {
+    val scopeSite = remember(siteId) { if (siteId.isBlank()) null else state.site(siteId) }
+    val scopeName = scopeSite?.name.orEmpty()
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<ThreadSummary>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
@@ -63,7 +67,7 @@ fun SearchScreen(
         loading = true
         searched = true
         scope.launch {
-            results = state.search(query)
+            results = state.search(query, scopeSite?.id)
             loading = false
         }
     }
@@ -83,7 +87,9 @@ fun SearchScreen(
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
-                placeholder = { Text("搜索所有站点的帖子") },
+                placeholder = {
+                    Text(if (scopeSite == null) "搜索所有站点的帖子" else "在「$scopeName」内搜索")
+                },
                 leadingIcon = { Icon(Icons.Outlined.Search, null, Modifier.size(18.dp)) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
@@ -101,8 +107,9 @@ fun SearchScreen(
             }
 
             !searched -> EmptyState(
-                title = "搜索论坛",
-                desc = "输入关键词，同时检索所有已启用站点的标题",
+                title = if (scopeSite == null) "搜索论坛" else "搜索「$scopeName」",
+                desc = if (scopeSite == null) "输入关键词，同时检索所有已启用站点的标题"
+                else "只在这个站点内检索帖子标题",
                 icon = Icons.Outlined.Search
             )
 

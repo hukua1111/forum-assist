@@ -370,15 +370,18 @@ class ForumClient(private val http: Http) {
     data class PortalBundle(
         val newthread: List<ThreadSummary> = emptyList(),
         val newreply: List<ThreadSummary> = emptyList(),
-        val hot: List<ThreadSummary> = emptyList()
+        val hot: List<ThreadSummary> = emptyList(),
+        val digest: List<ThreadSummary> = emptyList()
     ) {
         fun of(view: String): List<ThreadSummary> = when (view) {
             "newreply" -> newreply
             "hot" -> hot
+            "digest" -> digest
             else -> newthread
         }
 
-        fun isEmpty(): Boolean = newthread.isEmpty() && newreply.isEmpty() && hot.isEmpty()
+        fun isEmpty(): Boolean =
+            newthread.isEmpty() && newreply.isEmpty() && hot.isEmpty() && digest.isEmpty()
     }
 
     /**
@@ -391,12 +394,17 @@ class ForumClient(private val http: Http) {
         val base = site.baseUrl.trimEnd('/')
 
         // 搜书吧这类模板：四格只给截断标题、没有作者/时间/回复，信息量不如导读。
-        // 只对该站点改用「导读三视图」组装首页，其他站点仍旧走四格，行为不变。
+        // 只对该站点改用「导读」组装首页，其他站点仍旧走四格，行为不变。
         if (site.profile.guideBundle) {
+            // 精华是个例外：搜书吧的 guide&view=digest 是空的（「暂时还没有帖子」），
+            // 精华帖只在首页四格的 goodtiebox 里，所以这一栏单独读首页
+            val home = http.get("$base/forum.php?mobile=no", desktop = true)
+            val digest = home?.let { parsePortal(it, site, "digest") }.orEmpty()
             return@withContext PortalBundle(
                 newthread = guide(site, "newthread", 1),
                 newreply = guide(site, "newreply", 1),
-                hot = guide(site, "hot", 1)
+                hot = guide(site, "hot", 1),
+                digest = digest.ifEmpty { guide(site, "digest", 1) }
             )
         }
 
@@ -404,13 +412,15 @@ class ForumClient(private val http: Http) {
             val pc = PortalBundle(
                 newthread = parsePortal(html, site, "newthread"),
                 newreply = parsePortal(html, site, "newreply"),
-                hot = parsePortal(html, site, "hot")
+                hot = parsePortal(html, site, "hot"),
+                digest = parsePortal(html, site, "digest")
             )
             if (!pc.isEmpty()) return pc
             return PortalBundle(
                 newthread = parsePortalMobile(html, site, "newthread"),
                 newreply = parsePortalMobile(html, site, "newreply"),
-                hot = parsePortalMobile(html, site, "hot")
+                hot = parsePortalMobile(html, site, "hot"),
+                digest = parsePortalMobile(html, site, "digest")
             )
         }
 

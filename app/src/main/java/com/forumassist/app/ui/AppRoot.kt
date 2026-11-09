@@ -209,11 +209,18 @@ fun AppRoot() {
                         LogScreen(onBack = { nav.popBackStack() })
                     }
 
-                    composable("search") {
+                    // 带 siteId 时只搜该站点（从站点页进入）；不带则是首页的跨站搜索
+                    composable(
+                        "search?siteId={siteId}",
+                        arguments = listOf(
+                            navArgument("siteId") { type = NavType.StringType; defaultValue = "" }
+                        )
+                    ) { entry ->
                         SearchScreen(
                             state = state,
                             onBack = { nav.popBackStack() },
-                            onOpenThread = openThread
+                            onOpenThread = openThread,
+                            siteId = entry.arguments?.getString("siteId").orEmpty()
                         )
                     }
 
@@ -233,7 +240,7 @@ fun AppRoot() {
                                 nav.navigate("threads/${site.id}/${b.fid}?name=${Uri.encode(b.name)}")
                             },
                             onOpenWeb = { nav.navigate(webRoute(site, site.baseUrl)) },
-                            onSearch = { nav.navigate("search") }
+                            onSearch = { nav.navigate("search?siteId=${site.id}") }
                         )
                     }
 
