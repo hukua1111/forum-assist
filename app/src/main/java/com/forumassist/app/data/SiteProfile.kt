@@ -4,14 +4,18 @@ package com.forumassist.app.data
  * 站点画像：把一个站点上「模板差异导致」的解析/渲染策略集中开关。
  *
  * 背景：各站的 Discuz 模板差别很大，为某个站点写的兼容逻辑如果全局生效，
- * 很容易把别的站点解析坏。所以这里按站点开关，默认全部关闭 ——
- * 目前只有预设里的「尚香书苑」打开增强策略，其他站点行为与之前完全一致。
+ * 很容易把别的站点解析坏。所以这里按站点开关 ——
+ * 预设三站点各有一份画像；用户新添加的站点走 SiteAdaptation 通用规则，
+ * 探测结果（签到插件）落到 Site.signKind，其余策略用 Default。
  */
 data class SiteProfile(
     /** 附件解析增强：dl.tattl / ignore_js_op / 图片附件 / 付费附件 / 无权限提示 */
     val richAttachment: Boolean = false,
-    /** 图片请求带上帖子页 Referer（防盗链站点不加会 403 或返回占位图） */
-    val imageReferer: Boolean = false,
+    /**
+     * 图片请求带上帖子页 Referer（R7 通用规则：与浏览器行为一致）。
+     * 带 Referer 失败时 PostImage 会自动去掉 Referer 重试，两个方向都有退路。
+     */
+    val imageReferer: Boolean = true,
     /** 详情页多个候选入口并发探测，先成功先返回，避免串行等到超时 */
     val parallelDetail: Boolean = false,
     /** 超长正文按段落拆成 LazyColumn 的独立 item，只排版可视区域 */
@@ -87,17 +91,19 @@ data class SiteProfile(
         fun of(site: Site?): SiteProfile {
             if (site == null) return Default
             // 站点会被「地址发布页」换成新域名，所以名称和域名都要判断
-            if (site.name.contains("老王") || site.baseUrl.contains("laowang", ignoreCase = true)) {
-                return Laowang
+            val preset = when {
+                site.name.contains("老王") || site.baseUrl.contains("laowang", ignoreCase = true) -> Laowang
+                site.name.contains("搜书吧") ||
+                    site.baseUrl.contains("soushu", ignoreCase = true) ||
+                    site.baseUrl.contains("bew2459m", ignoreCase = true) ||
+                    site.baseUrl.contains("allshu", ignoreCase = true) -> Soushu
+                site.name.contains("尚香") || site.baseUrl.contains("sxsy", ignoreCase = true) -> Shangxiang
+                else -> Default
             }
-            val soushu = site.name.contains("搜书吧") ||
-                site.baseUrl.contains("soushu", ignoreCase = true) ||
-                site.baseUrl.contains("bew2459m", ignoreCase = true) ||
-                site.baseUrl.contains("allshu", ignoreCase = true)
-            if (soushu) return Soushu
-
-            val hit = site.name.contains("尚香") || site.baseUrl.contains("sxsy", ignoreCase = true)
-            return if (hit) Shangxiang else Default
+            // 添加站点时通用适配（SiteAdaptation）探测到的签到插件写入 site.signKind，
+            // 探测结果优先于预设内置值——这样预设站点换插件也能跟上，新站点直接用探测值
+            val sk = site.signKind.trim()
+            return if (sk.isNotBlank() && sk != preset.signKind) preset.copy(signKind = sk) else preset
         }
     }
 }

@@ -25,7 +25,9 @@ data class Site(
     /** 被屏蔽的版块 fid（多为广告版块），不展示、不进信息流 */
     val blockedFids: List<String> = emptyList(),
     /** 地址发布页：域名换了可从这页自动发现最新地址 */
-    val addressPage: String = ""
+    val addressPage: String = "",
+    /** 通用适配探测到的签到插件（sx/kmisign/dsu），预设站点为空走 SiteProfile 内置值 */
+    val signKind: String = ""
 ) {
     val host: String
         get() = baseUrl.removePrefix("https://").removePrefix("http://").trimEnd('/')
@@ -49,6 +51,7 @@ fun Site.toJson(): JSONObject = JSONObject().apply {
     put("isDemo", isDemo)
     put("blockedFids", JSONArray(blockedFids))
     put("addressPage", addressPage)
+    put("signKind", signKind)
 }
 
 fun JSONObject.toSite(): Site = Site(
@@ -64,7 +67,8 @@ fun JSONObject.toSite(): Site = Site(
     blockedFids = optJSONArray("blockedFids")?.let { arr ->
         (0 until arr.length()).mapNotNull { arr.optString(it, "").ifBlank { null } }
     }.orEmpty(),
-    addressPage = optString("addressPage", "")
+    addressPage = optString("addressPage", ""),
+    signKind = optString("signKind", "")
 )
 
 data class Board(

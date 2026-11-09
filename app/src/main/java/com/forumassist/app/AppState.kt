@@ -18,6 +18,7 @@ import com.forumassist.app.data.PinnedBoard
 import com.forumassist.app.data.Settings
 import com.forumassist.app.data.SignSupport
 import com.forumassist.app.data.Site
+import com.forumassist.app.data.SiteAdaptation
 import com.forumassist.app.data.SiteDetector
 import com.forumassist.app.data.SiteKind
 import com.forumassist.app.data.Store
@@ -78,9 +79,13 @@ class AppState(context: Context) {
     private val boardCache = mutableMapOf<String, List<Board>>()
 
     init {
-        // 只保留「尚香书苑 / 搜书吧」：老版本装过的其他预设站点做一次性清理
+        // 一次性清理：老版本内置、现已不再预置的站点（hostloc / 恩山 / 吾爱破解 / 演示站）。
+        // 用户手动添加的站点不受影响，全部保留
+        val legacy = listOf("hostloc.com", "right.com.cn", "52pojie.cn", "demo.forum")
         val loaded = store.sites()
-        val kept = loaded.filter { isPresetSite(it) }
+        val kept = loaded.filterNot { s ->
+            s.isDemo || legacy.any { s.baseUrl.contains(it, true) }
+        }
         if (kept.size != loaded.size) store.saveSites(kept)
         sites.addAll(kept)
         if (sites.isEmpty()) {
@@ -572,17 +577,25 @@ class AppState(context: Context) {
             val probe = withContext(Dispatchers.IO) { http.probe(url) }
             val kind = probe?.first ?: SiteKind.DISCUZ
             val title = probe?.second
+            // 通用适配规则（SiteAdaptation）：基于首页 HTML 探测签到插件等特征，
+            // 结果写入 site.signKind 随站点持久化，预设站点的独立开关不受影响
+            val report = probe?.third?.let { runCatching { SiteAdaptation.analyze(it, kind) }.getOrNull() }
             val site = Site(
                 name = name?.takeIf { it.isNotBlank() } ?: title ?: url.substringAfter("//"),
                 baseUrl = url,
                 kind = kind,
-                color = pickColor(sites.size)
+                color = pickColor(sites.size),
+                signKind = report?.signPlugin.orEmpty()
             )
             sites.add(site)
             store.saveSites(sites)
             if (probe == null) {
                 onDone(Result.failure(Exception("已保存，但暂时无法访问该站点，请检查网络或网址")))
             } else {
+                report?.let {
+                    AppLog.d("适配", "${site.name} → ${it.summary}")
+                    notify("已适配：${it.summary}")
+                }
                 onDone(Result.success(site))
             }
         }

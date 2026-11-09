@@ -260,12 +260,13 @@ class Http(private val store: Store) {
     /**
      * 探测站点：返回 (站点类型, 站点标题)
      */
-    fun probe(baseUrl: String): Pair<SiteKind, String>? {
+    /** 探测站点：返回 (引擎类型, 站点标题, 首页 HTML)，HTML 供 SiteAdaptation 通用适配使用 */
+    fun probe(baseUrl: String): Triple<SiteKind, String, String>? {
         val html = get("$baseUrl/") ?: return null
         val title = runCatching { org.jsoup.Jsoup.parse(html).title() }.getOrNull().orEmpty()
             .substringBefore("-").substringBefore("_").trim()
         val kind = if (baseUrl.contains("discuz", true)) SiteKind.DISCUZ else SiteDetector.detectType(html)
-        return kind to title.ifBlank { baseUrl }
+        return Triple(kind, title.ifBlank { baseUrl }, html)
     }
 
     fun hasLoginCookie(site: Site): Boolean {

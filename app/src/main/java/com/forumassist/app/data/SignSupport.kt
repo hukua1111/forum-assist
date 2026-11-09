@@ -16,6 +16,10 @@ import org.json.JSONObject
  *    按响应文本判断成功 / 已签。保存样本是游客态拿不到登录态按钮，
  *    所以判定用宽泛的文案匹配，兜底给出「结果未知」而不是误报成功。
  *
+ *  - 通用 dsu_paulsign（DSU 心情签到，Discuz 最常见的签到插件）：
+ *    从签到页解析 <form>（SiteAdaptation.parseSignForm），带默认心情提交。
+ *    用户新添加的站点经 SiteAdaptation 探测到该插件后自动启用。
+ *
  *  - 搜书吧：没有签到插件。官方攻略里唯一的「每日任务」是登录奖励——
  *    每天登录访问站点即自动 +2 银币，所以签到动作就是带登录态访问一次首页。
  */
@@ -49,6 +53,7 @@ object SignSupport {
         when (site.profile.signKind) {
             "sx" -> signSx(site, http, seccode)
             "kmisign" -> signKmisign(site, http)
+            "dsu" -> signDsu(site, http)
             "visit" -> signVisit(site, http)
             else -> SignResult.Failure("该站点不支持签到")
         }
@@ -137,6 +142,31 @@ object SignSupport {
             resp.contains("已签到") || resp.contains("已经签到") || resp.contains("重复签到") ->
                 SignResult.Already("今天已经签到过了")
             resp.contains("行动失败") || resp.contains("您需要先登录") ->
+                SignResult.Failure("需要先登录")
+            else -> SignResult.Failure("签到结果未知（响应：${resp.take(100)}）")
+        }
+    }
+
+    // ---------------------------------------------------------------- 通用 DSU 心情签到
+
+    private fun signDsu(site: Site, http: Http): SignResult {
+        val base = site.baseUrl.trimEnd('/')
+        val html = http.get("$base/plugin.php?id=dsu_paulsign:sign", desktop = true)
+            ?: return SignResult.Failure("签到页打开失败（网络或登录态问题）")
+        if (html.contains("已经签到") || html.contains("已签到，明天")) {
+            return SignResult.Already("今天已经签到过了")
+        }
+        val (action, fields) = SiteAdaptation.parseSignForm(html)
+            ?: return SignResult.Failure("没找到签到表单（可能需要先登录）")
+        val referer = "$base/plugin.php?id=dsu_paulsign:sign"
+        val resp = http.post(action, fields, referer = referer)
+            ?: return SignResult.Failure("签到请求失败")
+        return when {
+            resp.contains("签到成功") || resp.contains("succeedhandle") ->
+                SignResult.Success("签到成功")
+            resp.contains("已签") || resp.contains("已经签到") || resp.contains("重复签到") ->
+                SignResult.Already("今天已经签到过了")
+            resp.contains("您需要先登录") || resp.contains("权限") ->
                 SignResult.Failure("需要先登录")
             else -> SignResult.Failure("签到结果未知（响应：${resp.take(100)}）")
         }
