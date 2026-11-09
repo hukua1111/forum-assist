@@ -77,35 +77,33 @@ object HtmlBlocks {
                     val tag = node.normalName()
                     when {
                         tag == "img" -> {
-                            // Discuz 的懒加载图：src 是占位/缩略，真实地址在 zoomfile / file /
-                            // data-original 等属性里；占位图要跳过，否则正文里会显示一个
-                            // 「绿色的加载中/刷新」假图
-                            var src = ""
+                            // Discuz 的懒加载图：src 是占位（16x16 的绿色 loading 小图），
+                            // 真实地址在 zoomfile / file / data-original 等属性里。
+                            // 所有非占位候选都收进来，渲染时逐个试，避免只拿到占位图。
+                            val cands = LinkedHashSet<String>()
                             for (key in imageSrcAttributes) {
                                 val v = node.attr(key).trim()
                                 if (v.isBlank() || isPlaceholder(v)) continue
                                 val abs = absolute(v)
-                                if (abs.isNotBlank()) { src = abs; break }
+                                if (abs.isNotBlank()) cands.add(abs)
                             }
                             // 附件图常把原图挂在外层 <a href>，img 只有缩略/占位
-                            if (src.isEmpty()) {
-                                val href = node.closest("a[href]")?.attr("href").orEmpty().trim()
-                                if (href.isNotEmpty() && !isPlaceholder(href)) {
+                            node.closest("a[href]")?.attr("href")?.trim()?.takeIf { it.isNotEmpty() }
+                                ?.takeUnless { isPlaceholder(it) }
+                                ?.let { href ->
                                     val abs = absolute(href)
                                     val looksImage = abs.contains("attachment", ignoreCase = true) ||
                                         Regex("\\.(jpe?g|png|gif|webp|bmp)(\\?|$)", RegexOption.IGNORE_CASE)
                                             .containsMatchIn(abs)
-                                    if (looksImage) src = abs
+                                    if (looksImage && abs.isNotBlank()) cands.add(abs)
                                 }
+                            val usable = cands.filterNot {
+                                it.contains("/smiley/") || it.contains("static/image/")
                             }
                             val w = node.attr("width").toIntOrNull() ?: 0
-                            val skip = src.isEmpty() ||
-                                src.contains("/smiley/") ||
-                                src.contains("static/image/") ||
-                                (w in 1..60)
-                            if (!skip) {
+                            if (usable.isNotEmpty() && w !in 1..60) {
                                 flush()
-                                out.add(Block.Image(src))
+                                out.add(Block.Image(usable.first(), usable.drop(1)))
                             }
                         }
                         tag == "script" || tag == "style" || tag == "iframe" -> Unit

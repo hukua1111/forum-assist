@@ -1049,6 +1049,7 @@ private fun BlockContent(
 
         is Block.Image -> PostImage(
             url = block.url,
+            alts = block.alts,
             referer = if (profile.imageReferer) referer else ""
         )
     }
@@ -1059,13 +1060,24 @@ private fun BlockContent(
  * referer：防盗链站点需要带帖子页 Referer。
  */
 @Composable
-private fun PostImage(url: String, referer: String, modifier: Modifier = Modifier) {
+private fun PostImage(
+    url: String,
+    alts: List<String>,
+    referer: String,
+    modifier: Modifier = Modifier
+) {
     val ctx = LocalContext.current
+    // 候选地址：首选 + 备选，逐个试
+    val candidates = remember(url) {
+        buildList { add(url); alts.forEach { if (it !in this) add(it) } }
+    }
     var failed by remember(url) { mutableStateOf(false) }
+    var idx by remember(url) { mutableStateOf(0) }
     var attempt by remember(url) { mutableStateOf(0) }
+    val current = candidates.getOrElse(idx) { url }
     // 有些站点的防盗链反过来：校验 Referer 必须是本站，带错反被打回占位图。
-    // 所以带 Referer 失败后自动去掉 Referer 再试一次，两次都失败才显示重试块。
-    var noReferer by remember(url) { mutableStateOf(false) }
+    // 所以带 Referer 失败后自动去掉 Referer 再试一次。
+    var noReferer by remember(current, attempt) { mutableStateOf(false) }
 
     if (failed) {
         Box(
@@ -1074,7 +1086,7 @@ private fun PostImage(url: String, referer: String, modifier: Modifier = Modifie
                 .heightIn(min = 88.dp)
                 .clip(RoundedCornerShape(12.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
-                .clickable { failed = false; noReferer = false; attempt += 1 }
+                .clickable { failed = false; idx = 0; attempt += 1 }
                 .padding(16.dp),
             contentAlignment = Alignment.Center
         ) {
@@ -1088,12 +1100,17 @@ private fun PostImage(url: String, referer: String, modifier: Modifier = Modifie
     }
 
     val sendReferer = referer.isNotBlank() && !noReferer
-    val model = remember(url, referer, attempt, noReferer) {
+    val model = remember(current, attempt, noReferer, idx) {
         ImageRequest.Builder(ctx)
-            // 重试时换一个缓存 key，绕开上一次的失败结果
-            .data(if (attempt == 0) url else "$url#retry$attempt")
+            // 重试/换候选时换一个缓存 key，绕开上一次的失败结果
+            .data(if (attempt == 0 && idx == 0) current else "$current#c$idx-r$attempt")
             .apply { if (sendReferer) addHeader("Referer", referer) }
             .build()
+    }
+
+    // 换下一个候选；都试完了才显示重试块
+    fun advance() {
+        if (idx + 1 < candidates.size) idx += 1 else failed = true
     }
 
     AsyncImage(
@@ -1104,8 +1121,20 @@ private fun PostImage(url: String, referer: String, modifier: Modifier = Modifie
             .heightIn(max = 420.dp)
             .clip(RoundedCornerShape(12.dp)),
         contentScale = ContentScale.FillWidth,
+        onSuccess = { st ->
+            // 16x16 的「绿色刷新」占位图被拉伸满宽就是用户看到的样子；
+            // 载入成功但尺寸是这种小图标，直接当作占位图换下一个候选
+            val d = st.result.drawable
+            val w = d.intrinsicWidth
+            val h = d.intrinsicHeight
+            if (attempt == 0 && w in 1..48 && h in 1..48) {
+                com.forumassist.app.data.AppLog.d("图片", "占位图 ${w}x${h} $current")
+                advance()
+            }
+        },
         onError = {
-            if (sendReferer) noReferer = true else failed = true
+            com.forumassist.app.data.AppLog.d("图片", "加载失败 $current")
+            if (sendReferer) noReferer = true else advance()
         }
     )
 }

@@ -213,7 +213,8 @@ fun JSONObject.toThread(): ThreadSummary = ThreadSummary(
 
 sealed class Block {
     data class Text(val text: String) : Block()
-    data class Image(val url: String) : Block()
+    /** url 首选，alts 是备选（懒加载图的真实地址可能散在多个属性里） */
+    data class Image(val url: String, val alts: List<String> = emptyList()) : Block()
     data class Quote(val text: String) : Block()
 
     /** 帖子附件（Discuz 的 .pattl / dl.tattl）：文件名 + 下载/购买链接 */

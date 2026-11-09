@@ -317,7 +317,9 @@ class AppState(context: Context) {
                     .filterNot { it.isTop }
                     .filterNot { it.fid.isNotEmpty() && it.fid in blockedFidSet }
                     .distinctBy { it.key }
-                    .sortedByDescending { it.ts }
+                    // 站点之间随机轮插：各站点内部保持时间倒序，但不同站点的帖子交错出现，
+                    // 避免某个站点的帖子挤成一整块
+                    .let(::interleaveBySite)
 
                 // 三个分栏在同一个首页里，第一页只发一次请求，解析出三份列表
                 var failed = 0
@@ -483,6 +485,31 @@ class AppState(context: Context) {
                 }
             }
         }
+    }
+
+    /**
+     * 站点间随机轮插：每个站点内部保持原顺序（时间倒序），
+     * 站点之间的先后每次刷新随机洗一次，然后一轮一轮交错合并。
+     * 两个站点时会得到 A1 B1 A2 B2 …，不会出现「前半屏全是 A 站」。
+     */
+    private fun interleaveBySite(list: List<ThreadSummary>): List<ThreadSummary> {
+        if (list.size < 2) return list
+        val groups = list.groupBy { it.siteId }
+            .map { (_, items) -> items.iterator() }
+            .toMutableList()
+        groups.shuffle()
+        val out = ArrayList<ThreadSummary>(list.size)
+        var more = true
+        while (more) {
+            more = false
+            for (iter in groups) {
+                if (iter.hasNext()) {
+                    out.add(iter.next())
+                    more = true
+                }
+            }
+        }
+        return out
     }
 
     fun loadMoreFeed() {
