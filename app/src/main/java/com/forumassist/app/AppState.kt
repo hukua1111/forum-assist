@@ -112,6 +112,13 @@ class AppState(context: Context) {
                 store.saveSites(sites)
             }
         }
+        // 新增预设站点：老用户的站点列表非空不会走 defaultSites()，
+        // 这里做一次性补齐（已删除过老王的用户会再加回来，可随时在「论坛」页停用）
+        if (sites.none { isLaowang(it) }) {
+            val lw = defaultSites().first { isLaowang(it) }
+            sites.add(lw)
+            store.saveSites(sites)
+        }
         settings = store.settings()
         favorites.addAll(store.favorites())
         offline.addAll(store.offlineList())
@@ -158,8 +165,13 @@ class AppState(context: Context) {
             site.baseUrl.contains("bew2459m", ignoreCase = true) ||
             site.baseUrl.contains("allshu", ignoreCase = true)
 
+    /** 老王论坛判定：域名会换（laowang 系列域），名称与域名特征都要认 */
+    private fun isLaowang(site: Site): Boolean =
+        site.name.contains("老王") || site.baseUrl.contains("laowang", ignoreCase = true)
+
     /** 预设站点（老版本清理时只保留这些） */
-    private fun isPresetSite(site: Site): Boolean = isShangxiang(site) || isSoushu(site)
+    private fun isPresetSite(site: Site): Boolean =
+        isShangxiang(site) || isSoushu(site) || isLaowang(site)
 
     private fun defaultSites(): List<Site> = listOf(
         Site(
@@ -177,6 +189,13 @@ class AppState(context: Context) {
             color = 0xFF0CA678.toInt(),
             // 永久地址 → 中转域名 → 落地页「最新地址」，由 resolveAddressByChain 逐跳跟随
             addressPage = "http://www.soushu2030.com/"
+        ),
+        Site(
+            name = "老王论坛",
+            baseUrl = "https://laowang.vip",
+            kind = SiteKind.DISCUZ,
+            color = 0xFF1971C2.toInt()
+            // 老王的「地址发布」是站内帖子而非独立发布页，域名失效时手动改站点地址即可
         )
     )
 

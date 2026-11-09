@@ -63,9 +63,20 @@ data class SiteProfile(
             chainPublisher = true
         )
 
+        /**
+         * 老王论坛：Discuz X3.4 + UTF-8 + 标准桌面模板（dean 皮肤）。
+         * 首页是视频门户（无四格）→ portalBundle 必空，走标准「导读」当信息流；
+         * 导读/正文/登录全是标准 Discuz 结构，通用解析直接可用。
+         * 附件存在 /remote/data/attachment/，图片请求带帖子页 Referer 与浏览器行为一致。
+         */
+        val Laowang = SiteProfile(imageReferer = true)
+
         fun of(site: Site?): SiteProfile {
             if (site == null) return Default
             // 站点会被「地址发布页」换成新域名，所以名称和域名都要判断
+            if (site.name.contains("老王") || site.baseUrl.contains("laowang", ignoreCase = true)) {
+                return Laowang
+            }
             val soushu = site.name.contains("搜书吧") ||
                 site.baseUrl.contains("soushu", ignoreCase = true) ||
                 site.baseUrl.contains("bew2459m", ignoreCase = true) ||

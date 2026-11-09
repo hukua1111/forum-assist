@@ -65,16 +65,22 @@ object Attachments {
                         (img.attr("width").toIntOrNull() ?: 0) in 1..48
                 }
                 if (img == null || iconLike) {
-                    // 图标不是内容图：按「文件附件」处理，给出附件名 + 下载链接
-                    val name = dl.selectFirst(".attachname")?.text()?.trim()
-                        ?: dl.selectFirst(".attnm")?.text()?.trim()
-                        ?: dl.selectFirst(".filename")?.text()?.trim()
+                    // 图标不是内容图：按「文件附件」处理，给出附件名 + 下载链接。
+                    // 附件名可能在 .attachname（nayuan 插件）、.attnm（无 <a>），
+                    // 也可能就是下载链接本身的文字（老王论坛：p.mbn a「xxx.zip」）
                     val anchor = dl.selectFirst(
                         "a[href*=mod=attachment], a[id^=aid][href], p.buttons a[href], a[href*=attachpay]"
                     )
                     val href = anchor?.attr("href")?.trim().orEmpty()
+                    val fileLike = Regex("\\.[a-z0-9]{2,5}$", RegexOption.IGNORE_CASE)
+                    val rawName = dl.selectFirst(".attachname")?.text()?.trim()?.takeIf { it.isNotBlank() }
+                        ?: dl.selectFirst(".attnm")?.text()?.trim()?.takeIf { it.isNotBlank() }
+                        ?: dl.selectFirst(".filename")?.text()?.trim()?.takeIf { it.isNotBlank() }
+                        // 链接文字当附件名时，必须长得像文件名（带扩展名），避免把「下载附件」当名字
+                        ?: anchor?.text()?.trim()?.takeIf { fileLike.containsMatchIn(it) }
+                    val name = rawName?.let { cleanName(it) }?.takeIf { it.isNotBlank() && !isActionText(it) }
                     if (!name.isNullOrBlank() && href.startsWith("http") && seen.add(name + "|" + href)) {
-                        out.add(Block.File(name = cleanName(name), url = absolute(href, baseUrl), meta = metaOf(dl)))
+                        out.add(Block.File(name = name, url = absolute(href, baseUrl), meta = metaOf(dl)))
                     }
                     continue
                 }
