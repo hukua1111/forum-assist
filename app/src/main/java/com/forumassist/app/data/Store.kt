@@ -176,6 +176,15 @@ class Store(context: Context) {
         sp.edit().apply { if (uri == null) remove("download_tree") else putString("download_tree", uri) }.apply()
     }
 
+    // ------------------------------------------------------------ 每日签到记录
+
+    /** 上次签到日期（yyyy-MM-dd），值为空表示从未签过 */
+    fun signDate(siteId: String): String = sp.getString("sign_$siteId", null).orEmpty()
+
+    fun saveSignDate(siteId: String, date: String) {
+        sp.edit().putString("sign_$siteId", date).apply()
+    }
+
     // ------------------------------------------------------------ Cookie
 
     fun cookies(): List<CookieRec> {

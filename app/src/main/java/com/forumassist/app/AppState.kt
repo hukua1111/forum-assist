@@ -16,6 +16,7 @@ import com.forumassist.app.data.ForumClient
 import com.forumassist.app.data.Http
 import com.forumassist.app.data.PinnedBoard
 import com.forumassist.app.data.Settings
+import com.forumassist.app.data.SignSupport
 import com.forumassist.app.data.Site
 import com.forumassist.app.data.SiteDetector
 import com.forumassist.app.data.SiteKind
@@ -610,6 +611,61 @@ class AppState(context: Context) {
     fun toggleSite(site: Site) {
         updateSite(site.copy(enabled = !site.enabled))
         loadFeed(reset = true)
+    }
+
+    // ------------------------------------------------------------ 每日签到
+
+    /** 该站点是否支持签到（按 SiteProfile.signKind 判定） */
+    fun supportsSign(site: Site): Boolean = SignSupport.supported(site)
+
+    /** 本地记录的「今天是否已签」（签到成功/已签时写入当天日期） */
+    fun signedToday(site: Site): Boolean =
+        store.signDate(site.id) == todayKey()
+
+    private fun todayKey(): String =
+        java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.CHINA)
+            .format(java.util.Date())
+
+    /** 探测签到状态（是否已签 / 要不要验证码），在 IO 线程执行 */
+    fun probeSign(site: Site, onDone: (SignSupport.SignStatus) -> Unit) {
+        scope.launch {
+            val st = withContext(Dispatchers.IO) {
+                runCatching { SignSupport.probe(site, client.httpClient) }
+                    .getOrElse { SignSupport.SignStatus(note = it.message ?: "探测失败") }
+            }
+            onDone(st)
+        }
+    }
+
+    /** 取签到图形验证码图片（尚香 sx_signin） */
+    fun fetchSignCaptcha(site: Site, captchaUrl: String, onDone: (ByteArray?) -> Unit) {
+        scope.launch {
+            val bytes = withContext(Dispatchers.IO) {
+                runCatching {
+                    client.httpClient.getBytes("$captchaUrl&t=${System.currentTimeMillis()}")
+                }.getOrNull()
+            }
+            onDone(bytes)
+        }
+    }
+
+    /** 执行签到；成功或「已签」都会把当天日期写进本地记录 */
+    fun signIn(site: Site, seccode: String? = null, onDone: (SignSupport.SignResult) -> Unit) {
+        if (!site.loggedIn) {
+            onDone(SignSupport.SignResult.Failure("请先登录「${site.name}」（站点页 → 登录账号）"))
+            return
+        }
+        scope.launch {
+            val res = withContext(Dispatchers.IO) {
+                runCatching { SignSupport.sign(site, client.httpClient, seccode) }
+                    .getOrElse { SignSupport.SignResult.Failure(it.message ?: "签到异常") }
+            }
+            if (res is SignSupport.SignResult.Success || res is SignSupport.SignResult.Already) {
+                store.saveSignDate(site.id, todayKey())
+            }
+            AppLog.d("签到", "${site.name} → $res")
+            onDone(res)
+        }
     }
 
     private fun pickColor(index: Int): Int {

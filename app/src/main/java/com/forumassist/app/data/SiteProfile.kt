@@ -32,7 +32,12 @@ data class SiteProfile(
     /** 导读里「最新回复」的 view 参数（Discuz 官方是 new，不是 newreply） */
     val guideReplyView: String = "",
     /** 地址发布页是多级跳转（永久地址 → 中转域名 → 落地页「最新地址」） */
-    val chainPublisher: Boolean = false
+    val chainPublisher: Boolean = false,
+
+    // ---------------------------------------------------------------- 每日签到机制
+
+    /** 签到插件类型：sx=sx_signin（带验证码）；kmisign=k_misign；visit=登录访问即奖励；空=不支持 */
+    val signKind: String = ""
 ) {
     companion object {
         val Default = SiteProfile()
@@ -44,7 +49,9 @@ data class SiteProfile(
             parallelDetail = true,
             splitLongPost = true,
             cacheDetail = true,
-            openAttachmentInApp = true
+            openAttachmentInApp = true,
+            // 自研签到插件 sx_signin：POST op=signin&formhash&seccode（要图形验证码）
+            signKind = "sx"
         )
 
         /**
@@ -60,7 +67,9 @@ data class SiteProfile(
             titleFromAttr = true,
             normalizeRedirect = true,
             guideReplyView = "new",
-            chainPublisher = true
+            chainPublisher = true,
+            // 没有签到插件：官方攻略「每天登陆即可得 2 银币」= 登录态访问一次
+            signKind = "visit"
         )
 
         /**
@@ -69,7 +78,11 @@ data class SiteProfile(
          * 导读/正文/登录全是标准 Discuz 结构，通用解析直接可用。
          * 附件存在 /remote/data/attachment/，图片请求带帖子页 Referer 与浏览器行为一致。
          */
-        val Laowang = SiteProfile(imageReferer = true)
+        val Laowang = SiteProfile(
+            imageReferer = true,
+            // k_misign（迷神签到）插件：operation=qiandao&formhash
+            signKind = "kmisign"
+        )
 
         fun of(site: Site?): SiteProfile {
             if (site == null) return Default

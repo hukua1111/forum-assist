@@ -46,6 +46,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -241,6 +242,7 @@ private fun SiteRow(
                     }
                 }
             }
+            SignChip(state = state, site = site)
             Switch(
                 checked = site.enabled,
                 onCheckedChange = { state.toggleSite(site) }
@@ -295,6 +297,177 @@ private fun SiteRow(
 private fun loginLabel(site: Site): String {
     val u = site.username.orEmpty().trim()
     return if (u.isBlank() || u == "网页账号") "已登录" else "已登录 · $u"
+}
+
+// ------------------------------------------------------------ 每日签到
+
+/**
+ * 站点行里的签到按钮。状态机：未签 → （探测）→ 直接签 / 弹验证码对话框 → 已签。
+ * 「已签」来自本地记录（签到成功或站点返回已签时写入），当天不再重复请求。
+ */
+@Composable
+private fun SignChip(state: AppState, site: Site) {
+    if (!state.supportsSign(site)) return
+    var busy by remember(site.id) { mutableStateOf(false) }
+    var done by remember(site.id) { mutableStateOf(state.signedToday(site)) }
+    var captchaStatus by remember(site.id) { mutableStateOf<com.forumassist.app.data.SignSupport.SignStatus?>(null) }
+    var resultMsg by remember(site.id) { mutableStateOf<String?>(null) }
+
+    fun handleResult(res: com.forumassist.app.data.SignSupport.SignResult) {
+        busy = false
+        when (res) {
+            is com.forumassist.app.data.SignSupport.SignResult.Success -> {
+                done = true
+                resultMsg = res.message
+            }
+            is com.forumassist.app.data.SignSupport.SignResult.Already -> {
+                done = true
+                resultMsg = res.message
+            }
+            is com.forumassist.app.data.SignSupport.SignResult.Failure -> resultMsg = res.message
+        }
+    }
+
+    fun trySign() {
+        if (busy) return
+        if (done) {
+            state.notify("今天已经签到过了")
+            return
+        }
+        if (!site.loggedIn) {
+            state.notify("请先登录「${site.name}」再签到")
+            return
+        }
+        busy = true
+        state.probeSign(site) { st ->
+            when {
+                st.signedToday -> {
+                    done = true
+                    busy = false
+                    state.notify("今天已经签到过了")
+                }
+                st.needCaptcha -> {
+                    busy = false
+                    captchaStatus = st
+                }
+                else -> state.signIn(site) { handleResult(it) }
+            }
+        }
+    }
+
+    Surface(
+        onClick = { trySign() },
+        shape = RoundedCornerShape(10.dp),
+        color = if (done) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+        else MaterialTheme.colorScheme.primaryContainer
+    ) {
+        Text(
+            text = when {
+                busy -> "…"
+                done -> "已签"
+                else -> "签到"
+            },
+            style = MaterialTheme.typography.labelMedium,
+            color = if (done) MaterialTheme.colorScheme.onSurfaceVariant
+            else MaterialTheme.colorScheme.onPrimaryContainer,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+        )
+    }
+
+    // 签到结果 / 错误提示
+    resultMsg?.let { msg ->
+        AlertDialog(
+            onDismissRequest = { resultMsg = null },
+            confirmButton = { TextButton(onClick = { resultMsg = null }) { Text("好") } },
+            title = { Text(if (msg.startsWith("签到成功") || msg.contains("奖励") || msg.contains("银币")) "签到成功" else "签到") },
+            text = { Text(msg) }
+        )
+    }
+
+    // 尚香 sx_signin 要图形验证码：弹窗取图 + 输入
+    captchaStatus?.let { st ->
+        SignCaptchaDialog(
+            state = state,
+            site = site,
+            status = st,
+            onDismiss = { captchaStatus = null },
+            onSigned = { res ->
+                captchaStatus = null
+                handleResult(res)
+            }
+        )
+    }
+}
+
+@Composable
+private fun SignCaptchaDialog(
+    state: AppState,
+    site: Site,
+    status: com.forumassist.app.data.SignSupport.SignStatus,
+    onDismiss: () -> Unit,
+    onSigned: (com.forumassist.app.data.SignSupport.SignResult) -> Unit
+) {
+    var code by remember { mutableStateOf("") }
+    var img by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var loading by remember { mutableStateOf(false) }
+
+    fun load() {
+        loading = true
+        state.fetchSignCaptcha(site, status.captchaUrl) { bytes ->
+            loading = false
+            img = bytes?.let { android.graphics.BitmapFactory.decodeByteArray(it, 0, it.size) }
+        }
+    }
+    androidx.compose.runtime.LaunchedEffect(status) { load() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("签到 · 输入验证码") },
+        text = {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                val bitmap = img
+                if (bitmap != null) {
+                    androidx.compose.foundation.Image(
+                        bitmap = bitmap.asImageBitmap(),
+                        contentDescription = "签到验证码",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(110.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
+                    )
+                } else {
+                    Text(
+                        if (loading) "验证码加载中…" else "验证码加载失败",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(110.dp)
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+                TextButton(onClick = { load() }) { Text("看不清？换一张") }
+                Spacer(Modifier.height(6.dp))
+                OutlinedTextField(
+                    value = code,
+                    onValueChange = { code = it },
+                    label = { Text("验证码") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = code.isNotBlank(),
+                onClick = { state.signIn(site, code.trim()) { onSigned(it) } }
+            ) { Text("签到") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+    )
 }
 
 private fun Modifier.scaleSwitch() = this.then(Modifier.size(width = 40.dp, height = 26.dp))
