@@ -42,7 +42,7 @@ class AppState(context: Context) {
 
     val store = Store(context)
     val http = Http(store)
-    val client = ForumClient(http)
+    val client = ForumClient(http, store)
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     val sites: SnapshotStateList<Site> = mutableStateListOf()
@@ -311,7 +311,11 @@ class AppState(context: Context) {
                     .filterNot { it.isTop }
                     .filterNot { it.fid.isNotEmpty() && it.fid in blockedFidSet }
                     .distinctBy { it.key }
-                    .sortedByDescending { it.ts }
+                    // 首页按浏览量排：看得多的在前，同浏览量再按时间新→旧。
+                    // 四格没数字的站点（搜书吧）由 ForumClient 先从详情页补齐再进来。
+                    .sortedWith(
+                        compareByDescending<ThreadSummary> { it.views }.thenByDescending { it.ts }
+                    )
 
                 // 三个分栏在同一个首页里，第一页只发一次请求，解析出三份列表
                 var failed = 0
@@ -385,9 +389,16 @@ class AppState(context: Context) {
                         "刷新完成 最新=${perTab[0].size} 回复=${perTab[1].size} 热帖=${perTab[2].size}"
                     )
                 } else {
+                    // 首页只有四格的站点（搜书吧）没有下一页：不能拿「导读」凑数，
+                    // 否则翻出来的内容和首页完全不是一批帖子
+                    val pageable = enabled.filterNot { it.profile.portalOnly }
+                    if (pageable.isEmpty()) {
+                        feedEnd = true
+                        return@launch
+                    }
                     merged = clean(
                         coroutineScope {
-                            enabled.map { s ->
+                            pageable.map { s ->
                                 async(Dispatchers.IO) {
                                     try {
                                         client.guide(s, viewOfTab(feedTab), page)

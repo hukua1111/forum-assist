@@ -4,7 +4,10 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -17,7 +20,7 @@ import org.jsoup.nodes.Element
  * Discuz / PHPWind 系论坛的抓取与解析。
  * 采用「多套选择器逐步降级」的策略，尽量兼容不同模板（含手机版 mobile=2）。
  */
-class ForumClient(private val http: Http) {
+class ForumClient(private val http: Http, private val store: Store? = null) {
 
     /** 附件下载等场景需要直接复用带 Cookie 的 OkHttp 客户端 */
     val httpClient: Http get() = http
@@ -385,28 +388,17 @@ class ForumClient(private val http: Http) {
     }
 
     /**
-     * 一次请求把「最新主题 / 最新回复 / 热帖」全部解析出来。
+     * 一次请求把「最新主题 / 最新回复 / 热帖 / 精华」全部解析出来。
      *
-     * 这三个列表本来就在同一个首页/四格页面里，之前按分栏各请求一次，
+     * 这四个列表本来就在同一个首页/四格的页面里，之前按分栏各请求一次，
      * 等于把同一个几百 KB 的页面下了三遍——既慢又容易被站点限流。
+     *
+     * 尚香、搜书吧的首页都是标准 Discuz 四格，一律只解析这一份：
+     * 尚香四格带 tip（作者 / 时间 / 查看 / 回复），搜书吧只有标题，
+     * 后者的浏览量由 [enrichBundle] 按 tid 去详情页补（带 12 小时缓存）。
      */
     suspend fun portalBundle(site: Site): PortalBundle = withContext(Dispatchers.IO) {
         val base = site.baseUrl.trimEnd('/')
-
-        // 搜书吧这类模板：四格只给截断标题、没有作者/时间/回复，信息量不如导读。
-        // 只对该站点改用「导读」组装首页，其他站点仍旧走四格，行为不变。
-        if (site.profile.guideBundle) {
-            // 精华是个例外：搜书吧的 guide&view=digest 是空的（「暂时还没有帖子」），
-            // 精华帖只在首页四格的 goodtiebox 里，所以这一栏单独读首页
-            val home = http.get("$base/forum.php?mobile=no", desktop = true)
-            val digest = home?.let { parsePortal(it, site, "digest") }.orEmpty()
-            return@withContext PortalBundle(
-                newthread = guide(site, "newthread", 1),
-                newreply = guide(site, "newreply", 1),
-                hot = guide(site, "hot", 1),
-                digest = digest.ifEmpty { guide(site, "digest", 1) }
-            )
-        }
 
         fun bundleFrom(html: String): PortalBundle {
             val pc = PortalBundle(
@@ -432,7 +424,7 @@ class ForumClient(private val http: Http) {
                 return@withContext PortalBundle()
             }
             val b = bundleFrom(pcHtml)
-            if (!b.isEmpty()) return@withContext b
+            if (!b.isEmpty()) return@withContext enrichBundle(site, b)
         }
 
         // 2) 手机版首页：.tabs + #tabs-box 里的四页列表
@@ -443,9 +435,104 @@ class ForumClient(private val http: Http) {
                 return@withContext PortalBundle()
             }
             val b = bundleFrom(home)
-            if (!b.isEmpty()) return@withContext b
+            if (!b.isEmpty()) return@withContext enrichBundle(site, b)
         }
         PortalBundle()
+    }
+
+    // ------------------------------------------------ 四格没有「查看/回复」时的兜底
+
+    /** tid → [views, replies, 写入时间]；只在 [SiteProfile.viewsFromDetail] 的站点上有内容 */
+    private val viewCache: MutableMap<String, LongArray> by lazy {
+        store?.viewsCache() ?: mutableMapOf()
+    }
+
+    /** 详情页只补一次，四格里已经有数字的条目不再请求 */
+    private suspend fun enrichBundle(site: Site, bundle: PortalBundle): PortalBundle {
+        if (!site.profile.viewsFromDetail) return bundle
+        val all = bundle.newthread + bundle.newreply + bundle.hot + bundle.digest
+        if (all.isEmpty()) return bundle
+
+        val now = System.currentTimeMillis()
+        val stats = HashMap<String, LongArray>()
+        val miss = LinkedHashMap<String, ThreadSummary>()
+
+        for (t in all) {
+            if (t.views > 0) continue                       // 四格自带数字（尚香），不用补
+            val c = viewCache[t.key]
+            val fresh = c != null && now - c[2] < VIEW_TTL_MS
+            when {
+                c == null -> miss[t.key] = t
+                // 上次就没取到（版块要登录 / 页面结构不同）：12 小时内不再重试，
+                // 否则每次刷新都会把这批挨个再打一遍
+                fresh && c[0] < 0 -> Unit
+                fresh -> stats[t.key] = c
+                else -> {
+                    // 过期：先把旧值用上，同时排进重试队列
+                    if (c[0] >= 0) stats[t.key] = c
+                    miss[t.key] = t
+                }
+            }
+        }
+
+        if (miss.isNotEmpty()) {
+            // 4 路并发足够快，又不至于把站点打出限流
+            for (chunk in miss.values.take(MAX_VIEW_PROBES).chunked(4)) {
+                val got = coroutineScope {
+                    chunk.map { t ->
+                        async(Dispatchers.IO) { t.key to fetchThreadStat(site, t.tid) }
+                    }.awaitAll()
+                }
+                for ((key, v) in got) {
+                    val rec = v ?: longArrayOf(-1, 0, System.currentTimeMillis())
+                    viewCache[key] = rec
+                    if (v != null) stats[key] = v
+                }
+            }
+            store?.saveViewsCache(viewCache)
+            AppLog.d("首页", "补充浏览量 ${miss.size} 条（缓存 ${viewCache.size} 条）")
+        }
+
+        if (stats.isEmpty()) return bundle
+
+        fun apply(list: List<ThreadSummary>): List<ThreadSummary> = list.map { t ->
+            val s = stats[t.key] ?: return@map t
+            if (t.views > 0 || s[0] < 0) t
+            else t.copy(
+                views = s[0].toInt(),
+                replies = if (t.replies > 0) t.replies else s[1].toInt()
+            )
+        }
+        return PortalBundle(
+            newthread = apply(bundle.newthread),
+            newreply = apply(bundle.newreply),
+            hot = apply(bundle.hot),
+            digest = apply(bundle.digest)
+        )
+    }
+
+    /**
+     * 从详情页取「查看 / 回复」。
+     * 只有电脑版模板带统计：`<span class="xg1">查看:</span> <span class="xi1">311303</span>`
+     * （手机版详情页没有这两个字段，所以这里必须走 desktop）。
+     * 版块需要登录时站点会返回登录页，解析不到数字就返回 null，下次刷新再试。
+     */
+    private suspend fun fetchThreadStat(site: Site, tid: String): LongArray? =
+        withContext(Dispatchers.IO) {
+            val url = u(site, "forum.php?mod=viewthread&tid=$tid")
+            val html = http.get(url, referer = u(site, "forum.php"), desktop = true)
+                ?: return@withContext null
+            if (isServerErrorPage(html)) return@withContext null
+            val views = statNumber(html, "查看") ?: return@withContext null
+            val replies = statNumber(html, "回复") ?: 0L
+            longArrayOf(views, replies, System.currentTimeMillis())
+        }
+
+    private fun statNumber(html: String, label: String): Long? {
+        // 允许中间夹标签与空白：查看:</span> <span class="xi1">311303</span>
+        val m = Regex("$label\\s*[:：]\\s*(?:<[^>]*>\\s*)*([\\d,]{1,12})").find(html)
+            ?: return null
+        return m.groupValues[1].replace(",", "").toLongOrNull()
     }
 
     suspend fun portal(site: Site, view: String): List<ThreadSummary> =
@@ -1197,6 +1284,12 @@ class ForumClient(private val http: Http) {
         const val BODY_SELECTOR =
             "td.t_f, div.t_f, div.message, div.postmessage, [id^=postmessage_], " +
                 ".article-content, .post-content, .thread-content, .post_message"
+
+        /** 浏览量缓存有效期：12 小时内不再重复请求详情页 */
+        const val VIEW_TTL_MS = 12L * 60 * 60 * 1000
+
+        /** 一次刷新最多补多少条详情，避免首页四格刚开站时一次打几十个请求 */
+        const val MAX_VIEW_PROBES = 30
     }
 
     private fun buildPost(holder: Element, body: Element, index: Int, extracted: Boolean, site: Site): Post {
@@ -1429,4 +1522,5 @@ class ForumClient(private val http: Http) {
         Regex("thread-(\\d+)-").find(href)?.let { return it.groupValues[1] }
         return null
     }
+
 }

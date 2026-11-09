@@ -106,6 +106,43 @@ class Store(context: Context) {
     fun saveFeedCache(list: List<ThreadSummary>, tab: Int = 0) =
         writeThreads(if (tab <= 0) "feed_cache" else "feed_cache_$tab", list.take(200))
 
+    /**
+     * 首页四格不带浏览量的站点（搜书吧），补到的「查看/回复」按 tid 存一份，
+     * 12 小时内不再重复请求详情页。值 = [views, replies, 写入时间]。
+     */
+    fun viewsCache(): MutableMap<String, LongArray> {
+        val raw = sp.getString("views_cache", null) ?: return mutableMapOf()
+        return runCatching {
+            val obj = JSONObject(raw)
+            val map = mutableMapOf<String, LongArray>()
+            obj.keys().forEach { k ->
+                val arr = obj.optJSONArray(k) ?: return@forEach
+                if (arr.length() >= 3) {
+                    map[k] = longArrayOf(
+                        arr.optLong(0), arr.optLong(1), arr.optLong(2)
+                    )
+                }
+            }
+            map
+        }.getOrDefault(mutableMapOf())
+    }
+
+    fun saveViewsCache(map: Map<String, LongArray>) {
+        val obj = JSONObject()
+        // 只保留最近写入的 1200 条，避免 SharedPreferences 越滚越大
+        map.entries.sortedByDescending { it.value.getOrElse(2) { 0L } }.take(1200).forEach { (k, v) ->
+            obj.put(
+                k,
+                JSONArray().apply {
+                    put(v.getOrElse(0) { 0L })
+                    put(v.getOrElse(1) { 0L })
+                    put(v.getOrElse(2) { 0L })
+                }
+            )
+        }
+        sp.edit().putString("views_cache", obj.toString()).apply()
+    }
+
     fun readMarks(): MutableMap<String, Int> {
         val raw = sp.getString("read_marks", null) ?: return mutableMapOf()
         return runCatching {
