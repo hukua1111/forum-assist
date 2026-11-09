@@ -476,13 +476,18 @@ class ForumClient(private val http: Http, private val store: Store? = null) {
         }
 
         if (miss.isNotEmpty()) {
-            // 4 路并发足够快，又不至于把站点打出限流
+            // 4 路并发足够快，又不至于把站点打出限流；
+            // 整轮最多花 12 秒，剩下的留到下次刷新（首屏不能被这几十个请求拖住）
+            val deadline = System.currentTimeMillis() + VIEW_PROBE_BUDGET_MS
             for (chunk in miss.values.take(MAX_VIEW_PROBES).chunked(4)) {
-                val got = coroutineScope {
-                    chunk.map { t ->
-                        async(Dispatchers.IO) { t.key to fetchThreadStat(site, t.tid) }
-                    }.awaitAll()
-                }
+                if (System.currentTimeMillis() > deadline) break
+                val got = withTimeoutOrNull(8_000) {
+                    coroutineScope {
+                        chunk.map { t ->
+                            async(Dispatchers.IO) { t.key to fetchThreadStat(site, t.tid) }
+                        }.awaitAll()
+                    }
+                }.orEmpty()
                 for ((key, v) in got) {
                     val rec = v ?: longArrayOf(-1, 0, System.currentTimeMillis())
                     viewCache[key] = rec
@@ -1290,6 +1295,9 @@ class ForumClient(private val http: Http, private val store: Store? = null) {
 
         /** 一次刷新最多补多少条详情，避免首页四格刚开站时一次打几十个请求 */
         const val MAX_VIEW_PROBES = 30
+
+        /** 补浏览量的总时间预算：超时就停，剩下的下次刷新继续 */
+        const val VIEW_PROBE_BUDGET_MS = 12_000L
     }
 
     private fun buildPost(holder: Element, body: Element, index: Int, extracted: Boolean, site: Site): Post {
