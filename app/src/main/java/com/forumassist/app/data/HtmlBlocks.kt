@@ -16,7 +16,25 @@ object HtmlBlocks {
     private val horizontalWhitespace = Regex("[ \\t\\x0B\\f\\r]+")
     private val lineWhitespace = Regex(" *\\n *")
     private val excessLines = Regex("\\n{3,}")
-    private val imageSrcAttributes = arrayOf("zoomfile", "file", "data-src", "data-original", "src")
+    /**
+     * 真实图片地址可能出现的位置（Discuz 附件 + 各类懒加载插件）。
+     * 顺序即优先级：先看原图属性，最后才看 src —— 懒加载模板的 src 往往只是占位图。
+     */
+    private val imageSrcAttributes = arrayOf(
+        "zoomfile", "file", "data-original", "data-src", "data-lazy-src", "data-lazy",
+        "data-echo", "data-actualsrc", "_src", "lazyload", "original", "src"
+    )
+
+    /** 占位图特征：这些地址就算能下载也只是「加载中 / 无图 / 防盗链」的假图 */
+    private val placeholderHints = arrayOf(
+        "none.gif", "loading", "lazyload", "spacer", "blank.gif", "grey.gif",
+        "placeholder", "static/image/common", "nopic", "noavatar",
+        // 站点自己的 UI 素材（插件/模板目录）不可能是帖子正文图
+        "source/plugin", "/template/", "uc_server/images"
+    )
+
+    private fun isPlaceholder(url: String): Boolean =
+        placeholderHints.any { url.contains(it, ignoreCase = true) }
 
     fun parse(html: String, baseUrl: String = ""): List<Block> {
         if (html.isBlank()) return emptyList()
@@ -59,16 +77,29 @@ object HtmlBlocks {
                     val tag = node.normalName()
                     when {
                         tag == "img" -> {
-                            // Discuz 的懒加载图：src 是占位/缩略，真实地址在 zoomfile / file
-                            var raw = ""
+                            // Discuz 的懒加载图：src 是占位/缩略，真实地址在 zoomfile / file /
+                            // data-original 等属性里；占位图要跳过，否则正文里会显示一个
+                            // 「绿色的加载中/刷新」假图
+                            var src = ""
                             for (key in imageSrcAttributes) {
                                 val v = node.attr(key).trim()
-                                if (v.isNotBlank() && !v.contains("none.gif")) { raw = v; break }
+                                if (v.isBlank() || isPlaceholder(v)) continue
+                                val abs = absolute(v)
+                                if (abs.isNotBlank()) { src = abs; break }
                             }
-                            val src = absolute(raw)
+                            // 附件图常把原图挂在外层 <a href>，img 只有缩略/占位
+                            if (src.isEmpty()) {
+                                val href = node.closest("a[href]")?.attr("href").orEmpty().trim()
+                                if (href.isNotEmpty() && !isPlaceholder(href)) {
+                                    val abs = absolute(href)
+                                    val looksImage = abs.contains("attachment", ignoreCase = true) ||
+                                        Regex("\\.(jpe?g|png|gif|webp|bmp)(\\?|$)", RegexOption.IGNORE_CASE)
+                                            .containsMatchIn(abs)
+                                    if (looksImage) src = abs
+                                }
+                            }
                             val w = node.attr("width").toIntOrNull() ?: 0
                             val skip = src.isEmpty() ||
-                                src.contains("none.gif") ||
                                 src.contains("/smiley/") ||
                                 src.contains("static/image/") ||
                                 (w in 1..60)

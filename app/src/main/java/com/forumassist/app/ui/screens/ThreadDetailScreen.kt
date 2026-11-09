@@ -519,7 +519,10 @@ fun ThreadDetailScreen(
                     }
                 } else {
                     items(d.posts, key = { it.pid + it.floor }) { post ->
-                        PostCard(post = post, site = site, accent = Color(site.color), onOpenUrl = onOpenUrl)
+                        PostCard(
+                            post = post, site = site, accent = Color(site.color),
+                            referer = referer, onOpenUrl = onOpenUrl
+                        )
                     }
                 }
 
@@ -876,7 +879,13 @@ private fun PostHeadRow(post: Post, site: Site, accent: Color) {
 }
 
 @Composable
-private fun PostCard(post: Post, site: Site, accent: Color, onOpenUrl: (String) -> Unit) {
+private fun PostCard(
+    post: Post,
+    site: Site,
+    accent: Color,
+    referer: String,
+    onOpenUrl: (String) -> Unit
+) {
     val profile = site.profile
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -932,7 +941,7 @@ private fun PostCard(post: Post, site: Site, accent: Color, onOpenUrl: (String) 
             SelectionContainer {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     for (block in post.blocks) {
-                        BlockContent(block, site, profile, referer = "", onOpenUrl = onOpenUrl)
+                        BlockContent(block, site, profile, referer = referer, onOpenUrl = onOpenUrl)
                     }
                 }
             }
@@ -1054,6 +1063,9 @@ private fun PostImage(url: String, referer: String, modifier: Modifier = Modifie
     val ctx = LocalContext.current
     var failed by remember(url) { mutableStateOf(false) }
     var attempt by remember(url) { mutableStateOf(0) }
+    // 有些站点的防盗链反过来：校验 Referer 必须是本站，带错反被打回占位图。
+    // 所以带 Referer 失败后自动去掉 Referer 再试一次，两次都失败才显示重试块。
+    var noReferer by remember(url) { mutableStateOf(false) }
 
     if (failed) {
         Box(
@@ -1062,7 +1074,7 @@ private fun PostImage(url: String, referer: String, modifier: Modifier = Modifie
                 .heightIn(min = 88.dp)
                 .clip(RoundedCornerShape(12.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
-                .clickable { failed = false; attempt += 1 }
+                .clickable { failed = false; noReferer = false; attempt += 1 }
                 .padding(16.dp),
             contentAlignment = Alignment.Center
         ) {
@@ -1075,11 +1087,12 @@ private fun PostImage(url: String, referer: String, modifier: Modifier = Modifie
         return
     }
 
-    val model = remember(url, referer, attempt) {
+    val sendReferer = referer.isNotBlank() && !noReferer
+    val model = remember(url, referer, attempt, noReferer) {
         ImageRequest.Builder(ctx)
             // 重试时换一个缓存 key，绕开上一次的失败结果
             .data(if (attempt == 0) url else "$url#retry$attempt")
-            .apply { if (referer.isNotBlank()) addHeader("Referer", referer) }
+            .apply { if (sendReferer) addHeader("Referer", referer) }
             .build()
     }
 
@@ -1091,7 +1104,9 @@ private fun PostImage(url: String, referer: String, modifier: Modifier = Modifie
             .heightIn(max = 420.dp)
             .clip(RoundedCornerShape(12.dp)),
         contentScale = ContentScale.FillWidth,
-        onError = { failed = true }
+        onError = {
+            if (sendReferer) noReferer = true else failed = true
+        }
     )
 }
 

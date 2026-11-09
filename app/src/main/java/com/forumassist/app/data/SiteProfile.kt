@@ -54,6 +54,8 @@ data class SiteProfile(
          * 只开这几项，附件/正文仍走通用逻辑，不影响别的站点。
          */
         val Soushu = SiteProfile(
+            // 附件图有防盗链：不带帖子页 Referer 时站点会返回一张「加载中」的绿色占位图
+            imageReferer = true,
             portalOnly = true,
             titleFromAttr = true,
             normalizeRedirect = true,
