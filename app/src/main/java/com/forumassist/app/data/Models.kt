@@ -27,7 +27,9 @@ data class Site(
     /** 地址发布页：域名换了可从这页自动发现最新地址 */
     val addressPage: String = "",
     /** 通用适配探测到的签到插件（sx/kmisign/dsu），预设站点为空走 SiteProfile 内置值 */
-    val signKind: String = ""
+    val signKind: String = "",
+    /** 信息流来源（R3 通用适配）：portal=首页四格；guide=导读。空值运行时自动探测回落 */
+    val homeMode: String = ""
 ) {
     val host: String
         get() = baseUrl.removePrefix("https://").removePrefix("http://").trimEnd('/')
@@ -52,6 +54,7 @@ fun Site.toJson(): JSONObject = JSONObject().apply {
     put("blockedFids", JSONArray(blockedFids))
     put("addressPage", addressPage)
     put("signKind", signKind)
+    put("homeMode", homeMode)
 }
 
 fun JSONObject.toSite(): Site = Site(
@@ -68,7 +71,8 @@ fun JSONObject.toSite(): Site = Site(
         (0 until arr.length()).mapNotNull { arr.optString(it, "").ifBlank { null } }
     }.orEmpty(),
     addressPage = optString("addressPage", ""),
-    signKind = optString("signKind", "")
+    signKind = optString("signKind", ""),
+    homeMode = optString("homeMode", "")
 )
 
 data class Board(

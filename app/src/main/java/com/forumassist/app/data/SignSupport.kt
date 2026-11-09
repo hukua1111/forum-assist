@@ -123,6 +123,10 @@ object SignSupport {
         val base = site.baseUrl.trimEnd('/')
         val html = http.get("$base/$KMISIGN_PAGE", desktop = true)
             ?: return SignStatus(note = "签到页打开失败（网络或登录态问题）")
+        // 防采集人机验证可能连签到页本身都拦（tncode 滑块验证页）
+        if (html.contains("v2_captcha_form") || html.contains("请点击下面的按钮验证")) {
+            return SignStatus(note = "触发人机验证，请先用网页模式打开签到页完成验证")
+        }
         // 未登录时页面里根本没有 formhash，sign 会以「需要先登录」失败
         return SignStatus(formhash = formhashOf(html), signedToday = html.contains("已签到"))
     }
@@ -136,6 +140,17 @@ object SignSupport {
             referer = "$base/$KMISIGN_PAGE",
             desktop = true
         ) ?: return SignResult.Failure("签到请求失败")
+        // 老王的防采集人机验证（tncode 滑块 + 浏览器指纹）：拦截签到请求返回验证页。
+        // 滑块轨迹由前端 JS 生成，原生层无法伪造；验证通过后同会话内签到畅通，
+        // 所以引导用户去网页模式完成一次验证
+        if (resp.contains("v2_captcha_form") || resp.contains("请点击下面的按钮验证") ||
+            resp.contains("tncode")
+        ) {
+            return SignResult.Failure(
+                "老王触发了人机验证：请到「论坛 → 老王论坛 → 打开网页版」进入每日签到页，" +
+                    "点一次「立即签到」完成滑块验证后再回来签到"
+            )
+        }
         return when {
             resp.contains("签到成功") || resp.contains("succeedhandle") ->
                 SignResult.Success("签到成功")

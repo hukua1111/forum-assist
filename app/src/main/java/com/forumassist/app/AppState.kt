@@ -102,6 +102,20 @@ class AppState(context: Context) {
                     changed = true
                     v = v.copy(addressPage = "https://" + v.addressPage.removePrefix("//"))
                 }
+                // 老王域名迁移：laowang.vip 被 DNS 污染，切到可用镜像域；
+                // 登录 Cookie 按主机存储，一并搬到新域名下，网页端验证记录也能带上
+                if (v.baseUrl.contains("laowang.vip", true)) {
+                    changed = true
+                    v = v.copy(
+                        baseUrl = "https://laowangtym6kb.com",
+                        homeMode = v.homeMode.ifBlank { "guide" }
+                    )
+                }
+                // 老王是导读型站点（首页无四格），补 homeMode 跳过 portalBundle 大首页
+                if (isLaowang(v) && v.homeMode.isBlank()) {
+                    changed = true
+                    v = v.copy(homeMode = "guide")
+                }
                 if (v.addressPage.isNotBlank()) v else {
                     val known = KNOWN_ADDRESS_PAGES.firstOrNull { (key, _) ->
                         s.baseUrl.contains(key, true)
@@ -113,6 +127,11 @@ class AppState(context: Context) {
                 }
             }
             if (changed) {
+                // Cookie 按主机独立存储，老王换域名后把旧主机的 Cookie 原样搬到新主机
+                val moved = store.cookies().map {
+                    if (it.host.equals("laowang.vip", true)) it.copy(host = "laowangtym6kb.com") else it
+                }
+                store.saveCookies(moved)
                 sites.clear()
                 sites.addAll(fixed)
                 store.saveSites(sites)
@@ -198,9 +217,11 @@ class AppState(context: Context) {
         ),
         Site(
             name = "老王论坛",
-            baseUrl = "https://laowang.vip",
+            baseUrl = "https://laowangtym6kb.com",
             kind = SiteKind.DISCUZ,
-            color = 0xFF1971C2.toInt()
+            color = 0xFF1971C2.toInt(),
+            // 导读型站点（首页是视频门户无四格）：直接走导读，跳过 portalBundle 大首页
+            homeMode = "guide"
             // 老王的「地址发布」是站内帖子而非独立发布页，域名失效时手动改站点地址即可
         )
     )
@@ -353,6 +374,18 @@ class AppState(context: Context) {
                     val bundles = coroutineScope {
                         enabled.map { s ->
                             async(Dispatchers.IO) {
+                                // 导读型站点（homeMode=guide，如老王）：首页没有四格，
+                                // 跳过几百 KB 的 portalBundle，直接按四个 view 抓导读
+                                if (s.homeMode == "guide") {
+                                    val four = coroutineScope {
+                                        listOf("newthread", "newreply", "hot", "digest").map { v ->
+                                            async(Dispatchers.IO) {
+                                                runCatching { client.guide(s, v, 1) }.getOrDefault(emptyList())
+                                            }
+                                        }
+                                    }.awaitAll()
+                                    return@async ForumClient.PortalBundle(four[0], four[1], four[2], four[3])
+                                }
                                 val now = System.currentTimeMillis()
                                 // 站点没有门户四格时熔断 10 分钟，别每次切分栏都白下一遍首页
                                 var b = if (now >= (portalCoolDown[s.id] ?: 0L)) {
@@ -368,20 +401,22 @@ class AppState(context: Context) {
                                 // 首页只有四格的站点（搜书吧）解析失败就显示失败，
                                 // 不能拿「导读」的另一批帖子顶上，否则内容和站点首页对不上
                                 if (b.isEmpty() && !s.profile.portalOnly) {
-                                    // 站点没有门户四格：只补当前分栏一次 guide，不重复发三次
-                                    val view = viewOfTab(feedTab)
-                                    val one = try {
-                                        client.guide(s, view, 1)
-                                    } catch (e: Exception) {
-                                        AppLog.e("首页", "guide 失败 ${s.name}", e)
-                                        emptyList()
-                                    }
-                                    b = when (view) {
-                                        "newreply" -> b.copy(newreply = one)
-                                        "hot" -> b.copy(hot = one)
-                                        "digest" -> b.copy(digest = one)
-                                        else -> b.copy(newthread = one)
-                                    }
+                                    // 站点没有门户四格：四个分栏各补一份导读——
+                                    // 以前只补当前分栏，刷新任何一个分栏都会把
+                                    // 其他分栏里该站点的帖子冲掉（分栏串扰）
+                                    val four = coroutineScope {
+                                        listOf("newthread", "newreply", "hot", "digest").map { v ->
+                                            async(Dispatchers.IO) {
+                                                try {
+                                                    client.guide(s, v, 1)
+                                                } catch (e: Exception) {
+                                                    AppLog.e("首页", "guide 失败 ${s.name} view=$v", e)
+                                                    emptyList()
+                                                }
+                                            }
+                                        }
+                                    }.awaitAll()
+                                    b = ForumClient.PortalBundle(four[0], four[1], four[2], four[3])
                                 }
                                 b
                             }
